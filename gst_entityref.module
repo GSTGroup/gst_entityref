@@ -1,0 +1,644 @@
+<?php
+/**
+* @file
+* GST Entity Reference
+*
+*/
+
+/*
+ * GLOBAL DEFINES
+ */
+//define('GST_FIREPHP_ENABLED', 1);
+
+// define('GST_GROUP_SELECT_TABLE_WIDGET', 'gst_og_group_select_table');
+
+define('GST_QUERY_ARG', 'query');
+define('GST_CALLBACK_ARG', 'callback');
+
+/**
+* Implements hook_help().
+*/
+function gst_entityref_help($path, $arg) {
+  if ($path == 'admin/help#gst_entityref') {
+    return t('GST Entity Reference Module.');
+  }   
+}
+
+/**
+* Implementation of hook_init().
+*/
+function gst_entityref_init() {
+  if (GST_FIREPHP_ENABLED) {
+    // FirePHP Library : http://www.firephp.org/HQ/Use.htm
+    // Docs: http://docs.sourcemint.org/firephp.org/firephp/1/-docs/API/FirePHP
+    $firephp_path = libraries_get_path('FirePHPCore');
+    $firephp_path = ($firephp_path ? $firephp_path . '/lib/FirePHPCore/' : '');
+    include_once $firephp_path . 'FirePHP.class.php';
+    //module_load_include('php', 'devel', "FirePHPCore/lib/FirePHPCore/FirePHP.class");
+    //require_once('FirePHPCore/FirePHP.class.php');
+    global $firephp;
+    $firephp = FirePHP::getInstance(true);
+    $options = array('maxObjectDepth' => 7,
+                     'maxArrayDepth' => 7,
+                     'maxDepth' => 10,
+                     'useNativeJsonEncode' => true,
+                     'includeLineNumbers' => true);
+    $firephp->setOptions($options);  // or FB::setOptions($options);
+    //$firephp->setEnabled(false);  // To turn off ALL FirePHP Console Messages
+  
+    //$mail_system = variable_get('mail_system');
+    //dpm($mail_system);
+    //dfb($mail_system, "mail_system");
+  }
+}
+
+
+/**
+ * Implements hook_menu().
+ */
+function gst_entityref_menu() {
+  $items = array();
+
+  $items['gst_entityref/search_jsonp/%/%/%/%/%/%'] = array(
+    'title' => 'GST Entity Reference Autocomplete',
+    'page callback' => 'gst_entityref_autocomplete_callback',
+    'page arguments' => array(2, 3, 4, 5, 6, 7),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
+  );
+  
+  $items['gst_entityref/search_jsonp/%/%/%/%/%'] = array(
+      'title' => 'GST Entity Reference Autocomplete',
+      'page callback' => 'gst_entityref_autocomplete_callback',
+      'page arguments' => array(2, 3, 4, 5, 6),
+      'access callback' => TRUE,
+      'type' => MENU_CALLBACK,
+  );
+
+  $items['gst_entityref/search_jsonp/%/%/%/%'] = array(
+        'title' => 'GST Entity Reference Autocomplete',
+        'page callback' => 'gst_entityref_autocomplete_callback',
+        'page arguments' => array(2, 3, 4, 5),
+        'access callback' => TRUE,
+        'type' => MENU_CALLBACK,
+  );
+  
+  return $items;
+}
+
+/**
+* Implements hook_theme().
+*/
+function gst_entityref_theme() {
+   return array(
+     'gst_entityref' => array(
+     	//'variables' => array('element' => NULL),
+   		'render element' => 'element',
+     ),
+   );
+}
+
+/**
+* Theme an individual GST Entity Ref Widget
+*/
+function theme_gst_entityref($variables) {
+  global $base_root, $base_path;
+  $element = $variables['element'];
+  $attributes = &$variables['element']['#attributes'];
+  $gst_entityref_options = $element['#gst_entityref_options'];
+    
+  // Set unique id
+  if (!isset($attributes['id'])) {
+    $attributes['id'] = _gst_entityref_get_id();
+  }
+  $source = $base_root . $base_path . 'gst_entityref/search_jsonp' . 
+  	'/' . $gst_entityref_options['widget_type'] .                                      
+  	'/' . $gst_entityref_options['field_name'] . 
+  	'/' . $gst_entityref_options['entity_type'] . 
+  	'/' . $gst_entityref_options['bundle_name'] . 
+    //'/{query}/{callback}';
+  	'?' . GST_QUERY_ARG . '={query}';
+  if ($gst_entityref_options['jsonp']) {
+    $source .= '&' . GST_CALLBACK_ARG . '={callback}';
+  }
+    
+  // Fill GST EntityRef Options / Settings  
+  $gst_entityref_options += array(
+    'id' => $attributes['id'],
+    'input_id' => $element['gst_entityref_text']['#id'],
+    'source' => $source,
+  );
+  
+  // Add gst_entityref.js file to include Behaviors
+  $js_path = drupal_get_path('module', 'gst_entityref') . '/gst_entityref.js';
+  drupal_add_js($js_path);
+  
+  // Set Drupal.Settings DOM Object
+  drupal_add_js(array('gst_entityref' => array('#'. $attributes['id'] => $gst_entityref_options)), 'setting');
+  
+  // Load YUI Base Javascript (all other files will be lazy-loaded with YUI.use() )
+  //drupal_add_js('http://yui.yahooapis.com/3.4.1/build/yui/yui-min.js', 'external');
+  drupal_add_js('http://yui.yahooapis.com/3.4.1/build/yui/yui.js', 'external');
+  
+  // Begin Building Output
+  $output = '<div' . drupal_attributes($attributes) . ">\n";
+  $output .= 'GST Entity Ref Widget';
+  $output .= drupal_render($element['gst_entityref_text']);
+  $output .= '</div>';
+  
+  return $output;
+}
+
+/*
+ * WIDGET
+ */
+
+
+/**
+* Implements hook_field_widget_info().
+*/
+function gst_entityref_field_widget_info() {
+  $widgets['gst_entityref_autocomplete'] = array(
+    'label' => t('GST Autocomplete'),
+    'description' => t('An enhanced multi-column autocomplete text field.'),
+    'field types' => array('entityreference'),
+    'settings' => array(
+      'match_operator' => 'CONTAINS',
+      'size' => 60,
+      // We don't have a default here, because it's not the same between
+      // the two widgets, and the Field API doesn't update default
+      // settings when the widget changes.
+  		'path' => '',
+    ),
+  );
+
+  return $widgets;
+}
+
+
+/**
+ * Implements hook_field_widget_settings_form().
+ */
+function gst_entityref_field_widget_settings_form($field, $instance) {
+  $widget = $instance['widget'];
+  $settings = $widget['settings'] + field_info_widget_settings($widget['type']);
+
+  $form = array();
+
+  if ($widget['type'] == 'gst_entityref_autocomplete') {
+    $form['match_operator'] = array(
+      '#type' => 'select',
+      '#title' => t('Autocomplete matching'),
+      '#default_value' => $settings['match_operator'],
+      '#options' => array(
+        'STARTS_WITH' => t('Starts with'),
+        'CONTAINS' => t('Contains'),
+    ),
+      '#description' => t('Select the method used to collect autocomplete suggestions. Note that <em>Contains</em> can cause performance issues on sites with thousands of nodes.'),
+    );
+    $form['size'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Size of textfield'),
+      '#default_value' => $settings['size'],
+      '#element_validate' => array('_element_validate_integer_positive'),
+      '#required' => TRUE,
+    );
+  }
+
+  return $form;
+}
+
+/**
+* Implements hook_field_widget_info_alter().
+*/
+function gst_entityref_field_widget_info_alter(&$info) {
+  $info['options_select']['field types'][] = 'entityreference';
+  $info['options_buttons']['field types'][] = 'entityreference';
+}
+
+/**
+* Implements hook_field_widget_form().
+*/
+function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+  // Return the Standard Entity Reference Form for Testing
+  //return _entityreference_field_widget_form($form, $form_state, $field, $instance, $langcode, $items, $delta, $element);
+  switch ($instance['widget']['type']) {
+    case 'gst_entityref_autocomplete':
+      $jsonp = TRUE;
+      $gst_entityref_options = array(
+        'widget_type' => 'yui-std',
+        'resultFilters' => array('subWordMatch'),
+        'field_name' => $field['field_name'],
+        'entity_type' => $instance['entity_type'],
+        'bundle_name' => $instance['bundle'],
+        'jsonp' => $jsonp,
+      );
+      $element_ref = array(
+      	'#type' => 'gst_entityref',
+      	'#theme' => 'gst_entityref',
+        '#tree' => TRUE,
+      	'#title' => 'GST Entity Ref T',
+        '#default_value' => 'GST Entity Ref DV',        
+        '#attributes'=> array(
+          'class' => array('gst-entityref'),
+          ),
+        '#gst_entityref_options' => $gst_entityref_options,
+      );      
+//       $element_ref['gst_entityref'] = array(
+//         '#type' => 'gst_entityref',
+//         //'#type' => 'textfield',
+//         '#theme' => 'gst_entityref',
+//         '#tree' => TRUE,
+//         '#title' => 'GST Entity Ref T',
+//         '#default_value' => 'GST Entity Ref DV',
+//       );
+      $element_ref['gst_entityref_text'] = array(
+        '#type' => 'textfield',
+        '#attributes' => array(
+          //'class' => array('hidden'),
+          ),        
+      );
+      
+      break;
+  }
+  
+  
+  return $element_ref;
+}
+
+
+/**
+ * Implements hook_field_widget_form().
+ */
+function _entityreference_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+  $handler = entityreference_get_handler($field);
+
+  if ($instance['widget']['type'] == 'gst_entityref_autocomplete') {
+
+    if ($instance['widget']['type'] == 'gst_entityref_autocomplete') {
+      // We let the Field API handles multiple values for us, only take
+      // care of the one matching our delta.
+      if (isset($items[$delta])) {
+        $items = array($items[$delta]);
+      }
+      else {
+        $items = array();
+      }
+    }
+
+    $entity_ids = array();
+    $entity_labels = array();
+
+    // Build an array of entities ID.
+    foreach ($items as $item) {
+      $entity_ids[] = $item['target_id'];
+    }
+
+    // Load those entities and loop through them to extract their labels.
+    $entities = entity_load($field['settings']['target_type'], $entity_ids);
+
+    foreach ($entities as $entity_id => $entity) {
+      $label = $handler->getLabel($entity);
+      $key = "$label ($entity_id)";
+      // Labels containing commas or quotes must be wrapped in quotes.
+      if (strpos($key, ',') !== FALSE || strpos($key, '"') !== FALSE) {
+        $key = '"' . str_replace('"', '""', $key) . '"';
+      }
+      $entity_labels[] = $key;
+    }
+
+    if ($instance['widget']['type'] == 'gst_entityref_autocomplete') {
+      $path = !empty($instance['widget']['settings']['path']) ? $instance['widget']['settings']['path'] : 'gst_entityref/autocomplete/single';
+      $element += array(
+        '#type' => 'textfield',
+        '#maxlength' => 1024,
+        '#default_value' => implode(', ', $entity_labels),
+        '#autocomplete_path' => $path . '/' . $field['field_name'] . '/' . $instance['entity_type'] . '/' . $instance['bundle'],
+        '#size' => $instance['widget']['settings']['size'],
+        //ADFTODO: Add Validation
+        //ADF'#element_validate' => array('_entityreference_autocomplete_validate'),
+      );
+      return array('target_id' => $element);
+    }
+    else {
+      $path = !empty($instance['widget']['settings']['path']) ? $instance['widget']['settings']['path'] : 'gst_entityref/autocomplete/tags';
+      $element += array(
+        '#type' => 'textfield',
+        '#maxlength' => 1024,
+        '#default_value' => implode(', ', $entity_labels),
+        '#autocomplete_path' => $path . '/' . $field['field_name'] . '/' . $instance['entity_type'] . '/' . $instance['bundle'],
+        '#size' => $instance['widget']['settings']['size'],
+        //ADFTODO: Add Validation
+        //ADF'#element_validate' => array('_entityreference_autocomplete_tags_validate'),
+      );
+      return $element;
+    }
+  }
+}
+
+/**
+* Menu callback: autocomplete the label of an entity.
+* NOTE: We use query= and callback= URL Args *instead* of standard Drupal /%/% args for
+* 		query & callback to solve issues with '/' chars. When I used std %/% the '/' chars
+* 		while "converted" correctly on the client, created 403 errors on the server, so I changed code.
+*/
+function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $bundle_name) {
+  $string = $_GET[GST_QUERY_ARG];
+  $callback = $_GET[GST_CALLBACK_ARG];
+  
+  $val = array(
+    '0' => "val1 bob/jack $type $field_name $entity_type $bundle_name",
+    '1' => "val2 jack/mary $type $field_name $entity_type $bundle_name",
+    '2' => "val3 bob/mam $type $field_name $entity_type $bundle_name",
+    '3' => "val4 $type $field_name $entity_type $bundle_name",
+  );
+  
+  
+  $field = field_info_field($field_name);
+  $instance = field_info_instance($entity_type, $field_name, $bundle_name);
+  $matches = array();
+
+  if (!$field || !$instance || $field['type'] != 'entityreference' || !field_access('edit', $field, $entity_type)) {
+    return MENU_ACCESS_DENIED;
+  }
+
+  $handler = entityreference_get_handler($field);
+
+  $tag_last = $string;
+  //$entity_labels = $handler->getReferencableEntities($tag_last, $instance['widget']['settings']['match_operator'], 10);
+  //$query = _buildEntityFieldQuery($field, $tag_last, $instance['widget']['settings']['match_operator'], 10);
+  
+  $field['entity_type'] = $entity_type;
+  $field['bundle_name'] = $bundle_name;
+  $query = _buildQuery2($field, $tag_last, $instance['widget']['settings']['match_operator'], 20);
+  $results = $query->execute();
+  $target_entity_type = $field['settings']['target_type'];
+  if (!empty($results[$target_entity_type])) {
+    $entities = entity_load($target_entity_type, array_keys($results[$target_entity_type]));
+    // Fill Label
+  }
+    
+  
+  foreach ($results as $record) {
+    $foo = $record;
+  }
+  _drupal_jsonp_output($val, $callback);
+  return;
+  
+  if ($type == 'tags') {
+    // The user enters a comma-separated list of tags. We only autocomplete the last tag.
+    $tags_typed = drupal_explode_tags($string);
+    $tag_last = drupal_strtolower(array_pop($tags_typed));
+    if (!empty($tag_last)) {
+      $prefix = count($tags_typed) ? implode(', ', $tags_typed) . ', ' : '';
+    }
+  }
+  else {
+    // The user enters a single tag.
+    $prefix = '';
+    $tag_last = $string;
+  }
+
+  if (!empty($tag_last)) {
+    // Get an array of matching entities.
+    $entity_labels = $handler->getReferencableEntities($tag_last, $instance['widget']['settings']['match_operator'], 10);
+
+    // Loop through the products and convert them into autocomplete output.
+    foreach ($entity_labels as $entity_id => $label) {
+      $key = "$label ($entity_id)";
+      // Names containing commas or quotes must be wrapped in quotes.
+      if (strpos($key, ',') !== FALSE || strpos($key, '"') !== FALSE) {
+        $key = '"' . str_replace('"', '""', $key) . '"';
+      }
+      $matches[$prefix . $key] = '<div class="reference-autocomplete">' . $label . '</div>';
+    }
+  }
+
+  _drupal_jsonp_output($matches, $callback);
+}
+
+
+function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query) {
+  $q = $query;
+  $settings = $query->getMetaData('settings');
+}
+
+/*
+ * LOCAL FUNCTIONS
+ * ---------------------------------------------------------------------------
+ */
+/**
+* Returns an unique GST EntityREf id
+*/
+function _gst_entityref_get_id() {
+  static $gst_entityref_id;
+  return 'gst-entityref-'. ++$gst_entityref_id;
+}
+
+/**
+* Return data in JSON format.
+*
+* This function should be used for JavaScript callback functions returning
+* data in JSON format. It sets the header for JavaScript output.
+*
+* @param $var
+*   (optional) If set, the variable will be converted to JSON and output.
+*/
+function _drupal_jsonp_output($var = NULL, $callback = NULL) {
+  if (!isset($callback)) { drupal_json_output($var); return; }
+  
+  // We are returning JSON, so tell the browser.
+  drupal_add_http_header('Content-Type', 'application/json');
+  $json = '';
+  if (isset($var)) {
+    $json = drupal_json_encode($var);
+  }
+  echo $callback . '(' . $json . ')';
+  
+}
+
+function _buildEntityFieldQuery($field, $match = NULL, $match_operator = 'CONTAINS', $limit = 0) {
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', $field['settings']['target_type']);
+  if ($field['settings']['handler_settings']['target_bundles']) {
+    $query->entityCondition('bundle', $field['settings']['handler_settings']['target_bundles'], 'IN');
+  }
+  if (isset($match)) {
+    $entity_info = entity_get_info($field['settings']['target_type']);
+    if (isset($entity_info['entity keys']['label'])) {
+      $query->propertyCondition($entity_info['entity keys']['label'], $match, $match_operator);
+    }
+    //$query->propertyCondition('title', $match, $match_operator);
+  }
+  
+  // Add a generic entity access tag to the query.
+  $query->addTag($field['settings']['target_type'] . '_access');
+  $query->addTag('entityreference');
+  $query->addMetaData('field', $field);
+  
+  // Add the sort option.
+  if (!empty($field['settings']['handler_settings']['sort'])) {
+    $sort_settings = $field['settings']['handler_settings']['sort'];
+    if ($sort_settings['type'] == 'property') {
+      $query->propertyOrderBy($sort_settings['property'], $sort_settings['direction']);
+    }
+    elseif ($sort_settings['type'] == 'field') {
+      list($field, $column) = explode(':', $sort_settings['field'], 2);
+      $query->fieldOrderBy($field, $column, $sort_settings['direction']);
+    }
+  }  
+  if ($limit > 0) {
+    $query->range(0, $limit);
+  }
+  return $query;  
+  
+}
+
+function _buildQuery2($field, $match = NULL, $match_operator, $limit = 0) {
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', $field['settings']['target_type']);
+  if ($field['settings']['handler_settings']['target_bundles']) {
+    $query->entityCondition('bundle', $field['settings']['handler_settings']['target_bundles'], 'IN');
+  }
+  if (isset($match)) {
+    $entity_info = entity_get_info($field['settings']['target_type']);
+    if (isset($entity_info['entity keys']['label'])) {
+      $query->propertyCondition($entity_info['entity keys']['label'], $match, $match_operator);
+    }
+    //$query->propertyCondition('title', $match, $match_operator);
+  }
+  
+  // Add a generic entity access tag to the query.
+  $query->addTag($field['settings']['target_type'] . '_access');
+  $query->addTag('gst_entityref'); // Hook = gst_entityref_query_gst_entityref_alter()
+  $query->addMetaData('field', $field);
+  
+  //TEST Add a field and see what EFQ Does
+  $query->fieldCondition('node.title', $match, $match_operator);
+  
+  // Add Joins/Fields to MetaData (so it can get added to SelectQuery in hook_query_TAG_alter)
+  $search_fields = array();
+  $search_fields[] = 'field_data_field_c_lessons:entity_id:title';
+  $search_fields[] = 'field_data_field_c_lessons:field_c_lessons_value:title';
+  
+  //--------------------\\
+  // Test Token Matching \\
+  $text = '[entity:entity_id:title]';
+  $text = '[node:field-e-lesson-fcref3:field-ccl-lesson:title]';
+  
+  
+  $target_bundles = $field['settings']['handler_settings']['target_bundles'];
+  $tb = array();
+  foreach(array_keys($target_bundles) as $bundle_name) {
+    $f_field = field_info_field($bundle_name);
+    $tb[$bundle_name]['field'] = $f_field;
+    foreach($f_field['bundles'] as $entity_type => $entities) {
+      foreach($entities as $entity_name) {
+        $f_instance = field_info_instance($entity_type, $f_field['field_name'], $entity_name);
+        $tb[$bundle_name][$entity_type . "." . $entity_name] = $f_instance;
+      }
+    }
+  }
+  
+  $parent = $field['bundle_name'];
+  $data = $field;
+  foreach (token_scan($text) as $type => $tokens) {
+    $type = str_replace('_', '-', $type);
+    if ($type == 'node') {
+      continue;
+    }
+    if ($type == $field['field_name']) {
+      
+    }
+  }
+  
+  // I have decided that it is too ambitious to try and create a "dynamic" system
+  // that lets me define the "joins" using a single string. I would have to have
+  // extensive schema knowledge and understanding that I don't have.
+  // A better system would be to have a "routine" that uses a "tag" to fill the
+  // EntityRef with the joins. If I strongly specify how the joins are created
+  // later I can add a UI to that interface. At some point then beyond that
+  // I can add the "token" like linkage. So the dev of this widget wil be 3 
+  // phased:
+  // 1) Code the joins in PHP (but tied to a specific field)
+  // 2) Add a UI that can add that data
+  // 3) Add the ability to create that information with the Token system.
+  
+  //---------------------\\
+
+  $joins = array();
+  //-Parent Node of FC
+  $joins['gstcourse'] = array(
+    'method' => 'innerJoin',
+    'table' => 'node',
+    'alias' => 'gstcourse',
+    'conditions' => 'ncourse.nid = c_lessons.entity_id',
+  );
+  $settings = array(
+    'match' => $match,
+    'match_operator' => $match_operator,    
+  );
+  $query->addMetaData('settings', $settings);
+  
+  if ($limit > 0) {
+    $query->range(0, $limit);
+  }
+  return $query;  
+}
+
+
+function _buildQuery($field, $match = NULL, $match_operator, $limit = 0) {
+  // Based upon what I can see in the SQL, I need to do the following to *just* get the FC/ERefs that the user wants:
+  // 1) Make a list that contains the following for each target_bundle
+  //    $entity_type (this is the 1st level, usually 'node')
+  //    $entity_name (this is the 2nd level, usually a content type, like 'gstcourse'
+  // 2) This 'target_bundle' list has to be added as Conditions to the Select Query
+  //    For each entry in target_bundles:
+  //      condition('entity_type', $entity_type)
+  //      condition('bundle', $entity_name) <- in the FC Table, the "bundle" column has the $entity_name
+  //    These are all conditions against table: "field_data_" . $f_field['field_name']
+  // 3) I need to ensure I *include* that table - in fact, that table is to become the BASE table for
+  //    the entire query (it is the center, all other Joins go out from it)
+  //
+  $target_bundles = $field['settings']['handler_settings']['target_bundles'];
+  $tb = array();
+  foreach(array_keys($target_bundles) as $bundle_name) {
+    $f_field = field_info_field($bundle_name);
+    $tb[$bundle_name]['field'] = $f_field;
+    foreach($f_field['bundles'] as $entity_type => $entities) {
+      foreach($entities as $entity_name) {
+        $f_instance = field_info_instance($entity_type, $f_field['field_name'], $entity_name);
+        $tb[$bundle_name][$entity_type . "." . $entity_name] = $f_instance;        
+      }
+    }
+  }
+  
+  $fc18 = field_collection_item_load(18);
+  
+  $query = db_select('field_data_field_c_lessons', 'c_lessons')
+    ->fields('c_lessons', array('field_c_lessons_value'))
+    ->fields('nlesson', array('nid', 'title'))
+    ->fields('ccl_label', array('field_ccl_label_value'))
+    ->fields('ncourse', array('nid', 'title'))
+    ->fields('tdata', array('name', 'description'));
+  $a1 = $query->innerJoin('node', 'ncourse', 'ncourse.nid = c_lessons.entity_id');
+  $a2 = $query->join('field_data_field_ccl_label', 'ccl_label', 'c_lessons.field_c_lessons_value = ccl_label.entity_id');
+  $a3 = $query->join('field_data_field_ccl_lesson', 'ccl_lesson', 'c_lessons.field_c_lessons_value = ccl_lesson.entity_id');
+  $a4 = $query->innerJoin('node', 'nlesson', 'nlesson.nid = ccl_lesson.field_ccl_lesson_nid');
+  $a5 = $query->join('taxonomy_index', 'tindex', 'tindex.nid = nlesson.nid');
+  $a6 = $query->innerJoin('taxonomy_term_data', 'tdata', 'tdata.tid = tindex.tid');
+  $query
+    ->condition('nlesson.type', 'gstlesson')
+    ->condition(db_or()
+      ->condition('nlesson.title', '%' . $match . '%', 'LIKE')
+      ->condition('ncourse.title', '%' . $match . '%', 'LIKE')
+      ->condition('tdata.name', '%' . $match . '%', 'LIKE')
+      ->condition('tdata.description', '%' . $match . '%', 'LIKE')
+      );
+  if ($limit > 0) {
+    $query->range(0, $limit);
+  }
+  $qs = $query->__toString();
+  
+  return $query;
+}
