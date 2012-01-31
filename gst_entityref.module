@@ -95,6 +95,9 @@ function gst_entityref_theme() {
      	//'variables' => array('element' => NULL),
    		'render element' => 'element',
      ),
+     'gst_entityref_result' => array(
+       'variables' => array('result' => NULL, 'instance' => NULL),       
+     ),     
    );
 }
 
@@ -127,6 +130,7 @@ function theme_gst_entityref($variables) {
     'id' => $attributes['id'],
     'input_id' => $element['gst_entityref_text']['#id'],
     'source' => $source,
+    'alwaysShowList' => TRUE,      // For Testing - set to FALSE for Production
   );
   
   // Add gst_entityref.js file to include Behaviors
@@ -149,6 +153,72 @@ function theme_gst_entityref($variables) {
   return $output;
 }
 
+function theme_gst_entityref_result($vars) {
+  global $base_root, $base_path;
+  $result = $vars['result'];
+  $instance = $vars['instance'];
+  $output = '';
+  $format = $instance['widget']['settings']['resultFormatterCustom'];
+  // Format $values so it is of the format {key} = value (instead of key = value)
+  $tokens = array(); 
+  $values = array();
+  foreach($result as $k => $v) {
+    $fkey = '{'.$k.'}';
+    $tokens[] = $fkey;
+    $values[] = $v;
+  }
+  $output = str_replace($tokens, $values, $format);
+  
+  return $output;  
+}
+
+/**
+ * 
+ * Implements hook_tokens_alter()
+ * @param array $replacements
+ * @param array $context
+ */
+function gst_entityref_token_info_alter(array &$data) {
+  
+  $data['tokens']['field_collection_item']['host-entity'] = array(
+    'name' => 'Host Entity',
+    'type' => 'node',
+    'entity-token' => TRUE,
+    'description' => t('The hosting Entity of the field_collection_item'),
+  );
+  $data['tokens']['field_collection_item']['host-entity-id'] = array(
+      'name' => 'Host Entity ID',
+      'type' => 'integer',
+      'entity-token' => TRUE,
+      'description' => t('The hosting Entity ID of the field_collection_item'),
+  );
+  $data['tokens']['field_collection_item']['host-entity-type'] = array(
+      'name' => 'Host Entity Type',
+      'type' => 'string',
+      'entity-token' => TRUE,
+      'description' => t('The hosting Entity Type of the field_collection_item'),
+  );    
+}
+
+
+function gst_entityref_tokens($type, $tokens, array $data = array(), array $options = array()) {
+  return;  
+  if ($type == 'entity' && $data['entity_type'] == 'field_collection_item' && !empty($data['entity'])) {
+    // ADFDONE: Add the ->host_entity properties here
+    // I do this in the hook_entity_load() below. Much easier.
+    $entity = $data['entity'];    
+  }
+}
+
+function gst_entityref_entity_load(array $entities, $type) {
+  if ($type == 'field_collection_item' && isset($entities)) {
+    foreach ($entities as $entity) {
+      $entity->host_entity = $entity->hostEntity();
+      $entity->host_entity_id = $entity->hostEntityId();
+      $entity->host_entity_type = $entity->hostEntityType();
+    }
+  }
+}
 /*
  * WIDGET
  */
@@ -169,6 +239,13 @@ function gst_entityref_field_widget_info() {
       // the two widgets, and the Field API doesn't update default
       // settings when the widget changes.
   		'path' => '',
+  		'use_jsonp' => TRUE,
+  		'resultFormatterType' => 'TABLE',
+  		'maxResults' => 20,
+  		'minQueryLength' => 2,
+  		'subFilter' => TRUE,
+  		'subFilterDelimeter' => ',',
+  		'inputResultText' => '',
     ),
   );
 
@@ -186,25 +263,117 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
   $form = array();
 
   if ($widget['type'] == 'gst_entityref_autocomplete') {
+    $form['use_jsonp'] = array(
+    	'#type' => 'checkbox',
+      '#title' => t('Use JSONP Request/Callback'),
+      '#default_value' => isset($settings['use_jsonp']) ? 
+        $settings['use_jsonp'] : TRUE,
+     	'#access' => TRUE,
+    );
+
+    $form['resultFormatterType'] = array(
+      '#type' => 'select',
+      '#title' => t('Result formatter type'),
+      '#default_value' => isset($settings['resultFormatterType']) ? $settings['resultFormatterType'] : 'TABLE',
+      '#options' => array(
+        'TABLE' => t('Table'),
+        'CUSTOM' => t('Custom'),
+        ),
+    	'#required' => TRUE,
+      '#description' => t('Select the method used to display results.'),
+    );
+    
+    $form['resultFormatterCustom'] = array(
+      '#type' => 'textarea',
+      '#title' => t('Custom result formatter template'),
+      '#default_value' => isset($settings['resultFormatterCustom']) ? $settings['resultFormatterCustom'] : '',
+    	'#required' => FALSE,
+    	'#rows' => 7,
+      '#description' => t('Enter the custom result formatter template to use.'),
+      '#states' => array(
+        'visible' => array(  // action to take.
+        ':input[name="instance[widget][settings][resultFormatterType]"]' => array('value' => 'CUSTOM'),
+        ),
+      ),      
+    );
+    
+    $form['maxResults'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Maximun number of results'),
+      '#default_value' => isset($settings['maxResults']) ? $settings['maxResults'] : 20,
+      '#element_validate' => array('_element_validate_integer_positive'),
+      '#required' => TRUE,
+      '#description' => t('Maximum number of results to display. A value of 0 or less will allow an unlimited number of results.'),
+    );
+
+    $form['minQueryLength'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Minimum query length'),
+      '#default_value' => isset($settings['minQueryLength']) ? $settings['minQueryLength'] : 2,
+      '#element_validate' => array('_element_validate_integer_positive'),
+      '#required' => TRUE,
+    	'#description' => t('Minimum number of characters that must be entered before a query event will be fired. A value of 0 allows empty queries.'),
+    );
+    
     $form['match_operator'] = array(
       '#type' => 'select',
       '#title' => t('Autocomplete matching'),
-      '#default_value' => $settings['match_operator'],
+      '#default_value' => isset($settings['match_operator']) ? $settings['match_operator'] : 'CONTAINS',
       '#options' => array(
         'STARTS_WITH' => t('Starts with'),
         'CONTAINS' => t('Contains'),
-    ),
+      ),
       '#description' => t('Select the method used to collect autocomplete suggestions. Note that <em>Contains</em> can cause performance issues on sites with thousands of nodes.'),
     );
     $form['size'] = array(
       '#type' => 'textfield',
       '#title' => t('Size of textfield'),
-      '#default_value' => $settings['size'],
+      '#default_value' => isset($settings['size']) ? $settings['size'] : 60,
       '#element_validate' => array('_element_validate_integer_positive'),
       '#required' => TRUE,
     );
+    
+    $form['inputResultText'] = array(
+    	'#type' => 'textfield',
+      '#title' => t('Input field result text'),
+      '#default_value' => isset($settings['inputResultText']) ? $settings['inputResultText'] : '',
+      '#description' => t('This is the text that will be put into the input field once a selection is made.<br>Tokens are allowed.'),      
+      '#required' => FALSE,
+    );
+    
+    if (module_exists('token')) {
+      // Add token module replacements fields
+      $form['tokens'] = array(
+        '#type' => 'fieldset',
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+        '#title' => t('Placeholder tokens'),
+        '#description' => t("The following placeholder tokens can be used in Input Result Text. When used, they will be replaced with the appropriate values."),
+      );
+      $token_type = array(
+        'theme' => 'token_tree',
+        'token_types' => array(
+          $instance['entity_type'],
+          $field['settings']['target_type'],
+          ),
+        'global_types' => TRUE,
+        'click_insert' => TRUE,
+        'recursion_limit' => 2,
+      );
+      $form['tokens']['help'] = array(
+        '#type' => 'markup',
+        '#markup' => theme('token_tree', $token_type),
+      );    
+    }    
   }
 
+  // HOOK_gst_entityref_settings_form_alter
+  $vars = array(
+    'field' => $field,
+    'instance' => $instance,
+    'settings' => $settings,
+  );
+  drupal_alter('gst_entityref_settings_form', $form, $vars);
   return $form;
 }
 
@@ -222,9 +391,16 @@ function gst_entityref_field_widget_info_alter(&$info) {
 function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
   // Return the Standard Entity Reference Form for Testing
   //return _entityreference_field_widget_form($form, $form_state, $field, $instance, $langcode, $items, $delta, $element);
+  //ADFHI: Add code that takes the values stored in the $settings and set the YUI to be set correct (including maxQueryLength, etc)
+  //ADFHI: Fix term matches. Currently, if you type in "paul" that matches a term, so returns 2 entries, but
+  //  since the "highlight" match doesn't match an entry, the drop-down does not show up. Need to fix this.
+  // Allow any client form to update widget
+  $context = array('field' => $field, 'form' => $form, 'form_state' => $form_state);
+  drupal_alter('gst_entityref_instance', $instance, $context);
   switch ($instance['widget']['type']) {
     case 'gst_entityref_autocomplete':
-      $jsonp = TRUE;
+      $settings = $instance['widget']['settings'];
+      $jsonp = $settings['use_jsonp'];
       $gst_entityref_options = array(
         'widget_type' => 'yui-std',
         'resultFilters' => array('subWordMatch'),
@@ -232,6 +408,10 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
         'entity_type' => $instance['entity_type'],
         'bundle_name' => $instance['bundle'],
         'jsonp' => $jsonp,
+        'maxResults' => $settings['maxResults'],
+        'minQueryLength' => $settings['minQueryLength'],
+        'resultTextLocator' => 'inputResultText',
+        'resultFormatTemplate' => $instance['widget']['settings']['resultFormatterCustom'],
       );
       $element_ref = array(
       	'#type' => 'gst_entityref',
@@ -243,20 +423,12 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
           'class' => array('gst-entityref'),
           ),
         '#gst_entityref_options' => $gst_entityref_options,
+        '#widget' => $instance['widget'],
       );      
-//       $element_ref['gst_entityref'] = array(
-//         '#type' => 'gst_entityref',
-//         //'#type' => 'textfield',
-//         '#theme' => 'gst_entityref',
-//         '#tree' => TRUE,
-//         '#title' => 'GST Entity Ref T',
-//         '#default_value' => 'GST Entity Ref DV',
-//       );
       $element_ref['gst_entityref_text'] = array(
         '#type' => 'textfield',
         '#attributes' => array(
-          //'class' => array('hidden'),
-          ),        
+        ),        
       );
       
       break;
@@ -336,6 +508,28 @@ function _entityreference_field_widget_form(&$form, &$form_state, $field, $insta
   }
 }
 
+/*
+ * Adds a field to be used for searching/display/highlight
+ * This function should ONLY be called from teh hook_gst_entityref_settings_form_alter hook
+ * 
+ * @param $form The form to add the joins to. This is passed in the HOOK
+ * @param $data This is an array of data containing the Join to add The array
+ *   should be of the form:
+ *   array(
+ *   	'unique-name' => array(
+ *   		'join' => array(),
+ *   		''
+ *   	),
+ *   )
+ * @return
+ */
+function gst_entityref_add_filter_field(array &$form, array $data) {
+  if (!isset($form['filter_fields'])) {
+    $form['filter_fields'] = array();
+  }  
+  $form['filter_fields'] += $data;
+}
+
 /**
 * Menu callback: autocomplete the label of an entity.
 * NOTE: We use query= and callback= URL Args *instead* of standard Drupal /%/% args for
@@ -356,8 +550,12 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
   
   $field = field_info_field($field_name);
   $instance = field_info_instance($entity_type, $field_name, $bundle_name);
-  $matches = array();
-
+  // Allow any client form to update widget
+  $context = array('field' => $field, 'form' => Null, 'form_state' => Null);
+  drupal_alter('gst_entityref_instance', $instance, $context);  
+  
+  $matches = array();      // Un-Indexed list of Matches (this is what we MUST return to JSONP)
+  $imatches = array();     // Indexed list of Matches (indexed by entity_id)
   if (!$field || !$instance || $field['type'] != 'entityreference' || !field_access('edit', $field, $entity_type)) {
     return MENU_ACCESS_DENIED;
   }
@@ -370,21 +568,98 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
   
   $field['entity_type'] = $entity_type;
   $field['bundle_name'] = $bundle_name;
-  $query = _buildQuery2($field, $tag_last, $instance['widget']['settings']['match_operator'], 20);
-  $results = $query->execute();
-  $target_entity_type = $field['settings']['target_type'];
-  if (!empty($results[$target_entity_type])) {
-    $entities = entity_load($target_entity_type, array_keys($results[$target_entity_type]));
-    // Fill Label
+  $efq = _buildQuery2($field, $tag_last, $instance['widget']['settings']['match_operator'], 20);
+  $efq->addMetaData('widget', $instance['widget']);
+  //NOTE: The following is "hackish" but is *necessary* because of how the EFQ handles
+  // query results. Problem is, the EFQ HURLS any fields that are added, and ONLY returns
+  // an "entity" records, so it doesn't matter that I just went out to the DB and grabbed
+  // a set of 8 tables, all I get back is the ENTITY. While I can understand this, there
+  // are *times* when I want what I asked for (ie. the set of field results).
+  // Now, I could junk the EFQ entirely, and use a db_select() (which might be better),
+  // but I wrote it this way for now. THAT is the reason I run the $efq->execute() and then later
+  // run the $select_query->execute().
+  $results = $efq->execute();
+  $select_query = $efq->metaData['select_query'];
+  $full_results = $select_query->execute();
+  //ADFHI: Complete the code to create the $matches
+  //ADFHI: Include the code that sets the inputText (set this to the arg in the $instance)
+  // Build the $matches result set to send to the client 
+  // (NOTE: This result set COULD have MULTIPLE entries for each FC item due to the taxonomy matches - so check for that.
+  $mk_prefix = 'm_';
+  $sk_prefix = 's_';
+  if (!empty($full_results)) {
+    foreach($full_results as $record) {
+      $rec = (array)$record; // Convert stdClass to Array (so we can merge)
+      $entity_id = $rec['entity_id'];
+      if (isset($imatches[$entity_id])) {
+        $imatches[$entity_id]['#multiple'] = isset($imatches[$entity_id]['#multiple']) ? $imatches[$entity_id]['#multiple']+1 : 2;
+        // Create "multiple" entries for each entry
+        foreach($rec as $k => $v) {
+          if ($k[0] === '#' || !isset($v)) { continue; }
+          if (is_array($imatches[$entity_id][$k])) {
+            // This Key is a Multi-Value - add NEW value (if it is the same as an existing, it will do NOTHING, since array is associative)            
+            $imatches[$entity_id][$k][$v] = $v;
+          } elseif (isset($rec[$k]) && $imatches[$entity_id][$k] != $rec[$k]) {
+            // New Value Exists (not NULL), not the same as Existing - need to convert to an array to store both.
+            $existing = $imatches[$entity_id][$k];
+            $imatches[$entity_id][$k] = array(
+              $existing => $existing,
+              $v => $v,
+            );
+          } else {
+            // Not an array, but New value either doesn't exist, or is same as existing - do nothing            
+          }
+        }
+      } else {
+        $imatches[$entity_id] = $rec;        
+      }
+    }
+    // Load the Entity objects for Token Processing
+    $target_entity_type = $field['settings']['target_type'];
+    $entities = entity_load($target_entity_type, array_keys($imatches));
+    // Now fix all the multi-values (convert to delimited strings)
+    $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
+    foreach ($imatches as $entity_id => $rec) {
+      if (isset($rec['#multiple']) && $rec['#multiple']) {
+        // Handle matches that had multiple matches with the same item_collection entity_id
+        // (this likely means the FC has multiple "term" matches)
+        foreach ($rec as $k => $v) {
+          if (is_array($v)) {
+            $mk = $mk_prefix . $k;
+            $sk = $sk_prefix . $k;
+            $imatches[$entity_id][$sk] = reset($v);          // Store the FIRST value in the s_{key} field
+            $imatches[$entity_id][$k] = implode(',', $v);    // Store the delimited value in the {key} field
+            // Try and see if the $match passed matches any of these values, if so, set that one, if not, set the FIRST value
+            //ADFHI: Add code to do the above (I should do this AFTER I move to array-based $match strings)
+            //$imatches[$entity_id][$k] = reset($v); // Store the FIRST value in the non-multiple
+          }        
+        }
+      }
+      // Add the inputText value to the $match entry
+      //ADFHI: Figure out why I need to turn sanitize off. If I turn it on, it passes & chars to browser for apostrophes      
+      $inputResultText = token_replace($inputResultTextTemplate, 
+        array('field_collection_item' => $entities[$entity_id]), array('sanitize' => FALSE));
+      $imatches[$entity_id]['inputResultText'] = $inputResultText . " (" . $entity_id . ")";
+      
+      $vars = array(
+        'result' => $imatches[$entity_id],
+        'instance' => $instance,      
+      );
+      $imatches[$entity_id]['formattedResult'] = theme('gst_entityref_result', $vars);
+      
+      
+      // Now create the un-indexed version to send to the CLIENT in JSON
+      $matches[] = $imatches[$entity_id];      
+    }
   }
-    
   
-  foreach ($results as $record) {
-    $foo = $record;
-  }
-  _drupal_jsonp_output($val, $callback);
+  
+  
+  _drupal_jsonp_output($matches, $callback);
   return;
+
   
+  // When I get to "multiple tags" the following code will be useful to review
   if ($type == 'tags') {
     // The user enters a comma-separated list of tags. We only autocomplete the last tag.
     $tags_typed = drupal_explode_tags($string);
@@ -414,19 +689,136 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
     }
   }
 
-  _drupal_jsonp_output($matches, $callback);
 }
 
 
 function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query) {
-  $q = $query;
+  if (!$query->alterTags['gst_entityref']) {
+    return;
+  }
+  $widget = $query->getMetaData('widget');
   $settings = $query->getMetaData('settings');
+  $match = $settings['match'];
+  $query_extra = $widget['settings']['query_extra'];
+  
+  // Make Adjustments to Query
+  //ADFTODO: Add code to handle alias conflicts in joins
+  if (isset($query_extra['joins'])) {
+    foreach ($query_extra['joins'] as $j) {
+      $method = $j['method'];
+      $talias = $query->$method($j['table'], $j['alias'], $j['condition'], $j['args']);
+    }
+  }
+  //ADFTODO: Add code to handle alias conflicts in fields
+  //ADFHI: Add code to handle "sort order" - I should probably add this to the fields as an "option" for each field.
+  $orders = array();
+  if (isset($query_extra['fields'])) {
+    foreach ($query_extra['fields'] as $f) {      
+      $falias = $query->addField($f['table_alias'], $f['field_name'], $f['field_alias']);
+      if (isset($f['sort'])) {
+        $sort_dir = isset($f['sort_dir']) ? $f['sort_dir'] : 'ASC';
+        //ADFTODO: Add code to handle two fields with 'sort' => SAME value.
+        $orders[$f['sort']] = array(
+        	'name' => $f['field_alias'],
+        	'dir' => $sort_dir
+          );
+      }
+    }
+  }
+  ksort($orders);    // Sort by KEY
+  foreach ($orders as $i => $order) {
+    $query->orderBy($order['name'], $order['dir']);      
+  }
+  
+  //ADFTODO: Add code to handle alias conflicts created by joins/fields to fix $conditions
+  //ADFDONE: Add $conditions processing. Should be easy since all it does is copy it in.
+  //ADFDONE: When adding conditions, have to replace %match with match value, and have to fix operator 'default' values.
+  if (isset($query_extra['conditions'])) {
+    $conditions = $query_extra['conditions'];    
+    $match_operator = $widget['settings']['match_operator'];
+    $c_conditions = &$conditions->conditions();
+    _process_conditions($c_conditions, $match, $match_operator);
+    $q_conditions = &$query->conditions();    
+    $q_conditions = array_merge($q_conditions, $c_conditions);
+  }
+  // Save the db_select SelectQuery object - we will need it LATER
+  // - this is necessary because the EFQ returns a "partial" entity; it strips out ALL
+  // - the extra "fields" that I add, and I WANT those for display.
+  $efq = &$query->getMetaData('entity_field_query');
+  $efq->metaData['select_query'] = $query;
+  
+  // Remove the Alter Tag so I don't end up here AGAIN
+  $query->alterTags['gst_entityref'] = 0;
+  $qs = $query->__toString();
+}
+
+//ADFHI: Add processing for subFilter here.
+// I think if I just loop thru ALL the $match entries (if $match has a delimter)
+// and do the following I can make it work easily.
+// 1) add all $conditions for $match[0] (the first "query").
+// 2) loop thru $conditions for every other $match and if $value = %match, then
+//    add that condition *again* but with the 2nd (and following) $match[1] value.
+//    if $value != %match, REMOVE that condition (or don't add it).
+//   NOTE: These 2nd and following $condition loops wil need to be added with db_and()
+
+function _process_conditions(&$conditions, $match, $match_operator) {
+  foreach($conditions as $key => $condition) {    
+    if ($key[0] === '#' || empty($condition['operator'])) {
+      // #conjunction OR Literal Condition - Skip
+    } else {
+      if ($condition['field'] instanceof QueryConditionInterface) {
+        // Condition is a Structured Condition Object - recursively process
+        $cref = &$condition['field']->conditions();
+        _process_conditions($cref, $match, $match_operator);
+      } else {
+        // Process Condition
+        $value = isset($condition['value']) ? $condition['value'] : '';
+        $op = isset($condition['operator']) ? $condition['operator'] : '';
+
+        switch ($op) {
+          case '%default':
+          case 'default':
+            $m_operator = $match_operator;
+            break;
+          default:
+            $m_operator = $op;
+          break;
+        }
+        
+        switch ($value) {
+          case '%match':
+            $c_value = $match;
+            break;
+        }
+        switch ($m_operator) {
+          case 'CONTAINS':
+            $c_operator = "LIKE";
+            $c_value = '%'.$c_value.'%';
+            break;
+          case 'STARTS_WITH':
+            $c_operator = "LIKE";
+            $c_value = $c_value.'%';
+            break;
+        }        
+        $conditions[$key]['value'] = $c_value;
+        $conditions[$key]['operator'] = $c_operator;
+      }
+    }
+  }
+}
+
+function gst_entityref_gst_entityref_preformat_alter(&$vars) {
+  $v = $vars;
+//   $vars['modify'] = 'modify';
+//   $vars['results']['mod'] = 'modify';
+//   $vars['entities'][1]->modify = 'modify';
 }
 
 /*
  * LOCAL FUNCTIONS
  * ---------------------------------------------------------------------------
  */
+
 /**
 * Returns an unique GST EntityREf id
 */
@@ -510,21 +902,23 @@ function _buildQuery2($field, $match = NULL, $match_operator, $limit = 0) {
   
   // Add a generic entity access tag to the query.
   $query->addTag($field['settings']['target_type'] . '_access');
+  //$query->addTag('entityreference'); // Hook = gst_entityref_query_entityreference_alter()
+  
+  
+  // --- NOTE ---
+  // I can't add the "joins" here and then expect them to be processed
+  // The problem is quite simple, if I add the "joins" here (first) then the first
+  // time they will EVER be processed will be upon the first AutoComplete AJAX request.
+  // By that time, the YUI code has ALREADY been sent to the client.
+  // I will need to create the "joins" early (before the Widget is sent to the client)
+  // and then later take that set of "joins" and perform the "join" operation.
+  // Probably I should create an API that allows the user to "specify" the 
+  // Joins on "build" and then later, take that set of "joins" and then add them
+  // in the gst_entityref_query_gwst_entityref_alter() routine (adding them to the db_select() )
+  // --- NOTE ---
+  
   $query->addTag('gst_entityref'); // Hook = gst_entityref_query_gst_entityref_alter()
   $query->addMetaData('field', $field);
-  
-  //TEST Add a field and see what EFQ Does
-  $query->fieldCondition('node.title', $match, $match_operator);
-  
-  // Add Joins/Fields to MetaData (so it can get added to SelectQuery in hook_query_TAG_alter)
-  $search_fields = array();
-  $search_fields[] = 'field_data_field_c_lessons:entity_id:title';
-  $search_fields[] = 'field_data_field_c_lessons:field_c_lessons_value:title';
-  
-  //--------------------\\
-  // Test Token Matching \\
-  $text = '[entity:entity_id:title]';
-  $text = '[node:field-e-lesson-fcref3:field-ccl-lesson:title]';
   
   
   $target_bundles = $field['settings']['handler_settings']['target_bundles'];
@@ -540,17 +934,7 @@ function _buildQuery2($field, $match = NULL, $match_operator, $limit = 0) {
     }
   }
   
-  $parent = $field['bundle_name'];
-  $data = $field;
-  foreach (token_scan($text) as $type => $tokens) {
-    $type = str_replace('_', '-', $type);
-    if ($type == 'node') {
-      continue;
-    }
-    if ($type == $field['field_name']) {
-      
-    }
-  }
+  //---------------------\\
   
   // I have decided that it is too ambitious to try and create a "dynamic" system
   // that lets me define the "joins" using a single string. I would have to have
@@ -566,14 +950,8 @@ function _buildQuery2($field, $match = NULL, $match_operator, $limit = 0) {
   
   //---------------------\\
 
-  $joins = array();
-  //-Parent Node of FC
-  $joins['gstcourse'] = array(
-    'method' => 'innerJoin',
-    'table' => 'node',
-    'alias' => 'gstcourse',
-    'conditions' => 'ncourse.nid = c_lessons.entity_id',
-  );
+
+  //ADFHI: Clean up "settings" - I have them being stored in the $widget and the $query - need to clean it up.
   $settings = array(
     'match' => $match,
     'match_operator' => $match_operator,    
@@ -626,7 +1004,7 @@ function _buildQuery($field, $match = NULL, $match_operator, $limit = 0) {
   $a3 = $query->join('field_data_field_ccl_lesson', 'ccl_lesson', 'c_lessons.field_c_lessons_value = ccl_lesson.entity_id');
   $a4 = $query->innerJoin('node', 'nlesson', 'nlesson.nid = ccl_lesson.field_ccl_lesson_nid');
   $a5 = $query->join('taxonomy_index', 'tindex', 'tindex.nid = nlesson.nid');
-  $a6 = $query->innerJoin('taxonomy_term_data', 'tdata', 'tdata.tid = tindex.tid');
+  $a6 = $query->innerJoin('taxonomy_term_data', 'tdata', 'tdata.tid = tindex.tid');  
   $query
     ->condition('nlesson.type', 'gstlesson')
     ->condition(db_or()
