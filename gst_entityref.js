@@ -17,6 +17,8 @@
         var resultTextLocator = this.resultTextLocator;
         var alwaysShowList = this.alwaysShowList;
         var resultFormatTemplate = this.resultFormatTemplate;
+        var subFilter = this.subFilter;
+        var subFilterDelimiter = this.subFilterDelimiter;
         
         // YUI Initialization
         var Y = YUI().use('node', 'autocomplete', 'autocomplete-highlighters', 'autocomplete-filters', function (Y) {
@@ -24,7 +26,7 @@
           // AutoComplete widget skin will be applied.
           Y.one('body').addClass('yui3-skin-sam');
           
-          Y.one(input_id).plug(Y.Plugin.AutoComplete, {
+          var inputNode = Y.one(input_id).plug(Y.Plugin.AutoComplete, {
             //resultHighlighter: 'phraseMatch',
             resultHighlighter: customHighlighter,
             //resultFilters: resultFilters,
@@ -43,6 +45,24 @@
             //source: 'http://localhost:8888/men/gst_entityref/search_jsonp/field_e_lesson_fcref3/node/gstevent/{query}/{callback}',
           });
   
+          // The following handles subMatch queries
+          inputNode.ac.on('query', function(e) {
+            if (!subFilter) { return; }
+            var query = e.query;
+            var lastQuery = (e.target.lastQuery != undefined) ? e.target.lastQuery : '';
+            var sfd = (subFilterDelimiter != undefined) ? subFilterDelimiter : ',';
+            // Compare query to lastQuery - if all they did is type in a , do NOTHING
+            if (query == sfd) { 
+              e.preventDefault(); return; 
+            }  
+            // If all they did is "add" a , do NOTHING (wait for them to type some more)
+            if (query.length > lastQuery.length && query.substr(lastQuery.length) == sfd) { 
+              e.preventDefault(); return; 
+            }            
+            // Save this query so it can be referred to later
+            e.target.lastQuery = query;
+          });
+          
           // This provides NO filter. It relies upon the server to handle filtering.
           // This is primarilyh used for when we filter on a "term" that is not displayed.
           //ADFHI: Fix the no_filter - I should add a filter that filters on ALL passed values
@@ -51,6 +71,10 @@
             return results;
           }
           
+          //ADFHI: Need to test this - not sure if it works correctly.
+          //ADFHI: Currently I "search" on ALL fields in the "raw" array. That INCLUDES fields like entity_id
+          //  this is a problem. I need to figure out some way to remove that (perhaps not send it?)
+          //  Perhaps I could pre-pend all non-search fields with # since I don't search on those.
           // Filter results on ALL field in the result
           function gst_entityref_filter_phraseMatch(query, results) {
             var lc_query = query.toLowerCase();
@@ -60,16 +84,37 @@
             return Y.Array.filter(results, function (result) {
               var raw = result.raw;
               var v;
-              for (var key in raw) {
-                if (key == undefined) { continue; }
-                v = raw[key];
-                Y.log(key + " = " + v, "info", "gst_entityref");
-                // Search for the "query" in ANY location of ANY field, if it exists, return TRUE
-                if (v.toLowerCase().indexOf(lc_query) !== -1) {
-                  return true;
+              if (subFilter) {
+                var matches = lc_query.split(subFilterDelimiter);
+                var found;
+                var match;                
+                for (var mkey in matches) {
+                  match = matches[mkey];
+                  found = false;
+                  match_loop:
+                  for (var key in raw) {
+                    if (key == undefined) { continue; }
+                    v = raw[key];
+                    // Search for the "query" in ANY location of ANY field, if it exists, set found to TRUE, and move to next "match" to test
+                    if (v.toLowerCase().indexOf(match) !== -1) {
+                      found = true;
+                      break match_loop; // jump OUT of for loop and UP to the next match to check
+                    }
+                  } 
+                  // break goes to here
                 }
+                return found;
+              } else {
+                for (var key in raw) {
+                  if (key == undefined) { continue; }
+                  v = raw[key];
+                  // Search for the "query" in ANY location of ANY field, if it exists, return TRUE
+                  if (v.toLowerCase().indexOf(lc_query) !== -1) {
+                    return true;
+                  }                                    
+                }
+                return false;   // if we get here, we didn't find it
               }
-              return false;              
             });            
           }
           
@@ -92,6 +137,7 @@
             });
           }
           
+          //ADFHI: Add "highlighting" of subFilter matches "match,match"...
           function gst_entityref_token_formatter(query, results) {
             var row_num = 0;
             return Y.Array.map(results, function (result) {
@@ -99,9 +145,10 @@
               var raw = result.raw;
               var fmt = Y.Lang.sub(resultFormatTemplate, raw);
               var r = new Array();
+              var needle = (subFilter) ? query.split(subFilterDelimiter) : $query;
               for (var key in raw) {
                 //Y.log(key + " = " + raw[key], "info", "gst_entityref");
-                r[key] = '<span>' + Y.Highlight.all(raw[key], query) + '</span>';
+                r[key] = '<span>' + Y.Highlight.all(raw[key], needle) + '</span>';
                 //Y.log(key + " ==> " + r[key], "info", "gst_entityref");
               }
               // For some reason, the following does not work - it gives an e.map is not a function error

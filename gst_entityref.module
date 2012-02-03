@@ -128,9 +128,9 @@ function theme_gst_entityref($variables) {
   // Fill GST EntityRef Options / Settings  
   $gst_entityref_options += array(
     'id' => $attributes['id'],
-    'input_id' => $element['gst_entityref_text']['#id'],
+    'input_id' => $element['target_id']['#id'],
     'source' => $source,
-    'alwaysShowList' => TRUE,      // For Testing - set to FALSE for Production
+    //'alwaysShowList' => TRUE,      // For Testing - set to FALSE for Production
   );
   
   // Add gst_entityref.js file to include Behaviors
@@ -147,7 +147,7 @@ function theme_gst_entityref($variables) {
   // Begin Building Output
   $output = '<div' . drupal_attributes($attributes) . ">\n";
   $output .= 'GST Entity Ref Widget';
-  $output .= drupal_render($element['gst_entityref_text']);
+  $output .= drupal_render($element['target_id']);
   $output .= '</div>';
   
   return $output;
@@ -220,6 +220,13 @@ function gst_entityref_entity_load(array $entities, $type) {
   }
 }
 /*
+ * FIELD
+ */
+
+
+
+
+/*
  * WIDGET
  */
 
@@ -241,11 +248,14 @@ function gst_entityref_field_widget_info() {
   		'path' => '',
   		'use_jsonp' => TRUE,
   		'resultFormatterType' => 'TABLE',
+  		'resultFormatterCustom' => '',
+  		'resultFormatterFile' => '',
   		'maxResults' => 20,
   		'minQueryLength' => 2,
+  		'queryDelay' => 100,
   		'subFilter' => TRUE,
-  		'subFilterDelimeter' => ',',
-  		'inputResultText' => '',
+  		'subFilterDelimiter' => ',',
+  		'inputResultText' => '',  		
     ),
   );
 
@@ -277,10 +287,25 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
       '#default_value' => isset($settings['resultFormatterType']) ? $settings['resultFormatterType'] : 'TABLE',
       '#options' => array(
         'TABLE' => t('Table'),
+    		'FILE' => t('Template File'),
         'CUSTOM' => t('Custom'),
         ),
     	'#required' => TRUE,
       '#description' => t('Select the method used to display results.'),
+    );
+
+    $form['resultFormatterFile'] = array(
+        '#type' => 'textfield',
+        '#title' => t('Custom result formatter template file'),
+        '#default_value' => isset($settings['resultFormatterFile']) ? $settings['resultFormatterFile'] : '',
+      	'#required' => FALSE,      	
+        '#description' => t('Enter the custom result formatter template file to use.</br>' .
+          'To indicate a relative file to a module or theme, format file as module-name:relative/path/'),
+        '#states' => array(
+          'visible' => array(  // action to take.
+          ':input[name="instance[widget][settings][resultFormatterType]"]' => array('value' => 'FILE'),
+        ),
+      ),
     );
     
     $form['resultFormatterCustom'] = array(
@@ -313,6 +338,15 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
       '#element_validate' => array('_element_validate_integer_positive'),
       '#required' => TRUE,
     	'#description' => t('Minimum number of characters that must be entered before a query event will be fired. A value of 0 allows empty queries.'),
+    );
+    
+    $form['queryDelay'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Query delay (ms)'),
+      '#default_value' => isset($settings['queryDelay']) ? $settings['queryDelay'] : 2,
+      '#element_validate' => array('_element_validate_integer_positive'),
+      '#required' => TRUE,
+    	'#description' => t('Number of milliseconds to wait after user input before triggering a query event. If new input occurs before this delay is over, the previous input event will be ignored and a new delay will begin.'),
     );
     
     $form['match_operator'] = array(
@@ -385,6 +419,41 @@ function gst_entityref_field_widget_info_alter(&$info) {
   $info['options_buttons']['field types'][] = 'entityreference';
 }
 
+function gst_entityref_get_resultFormatTemplate($instance) {
+  $resultFormatterType = $instance['widget']['settings']['resultFormatterType'];
+  switch ($resultFormatterType) {
+    case 'CUSTOM':
+      return $instance['widget']['settings']['resultFormatterCustom'];
+      break;
+    case 'FILE':
+      //ADFTODO: Perhaps process the template with vars? For now I just read it in, I could use
+      // bgs_helper_render_form_template() as a base and process it? Not sure why, but I could...?
+      // use drupal_get_path(type, name) to get module/theme path
+      $resultFormatterFile = $instance['widget']['settings']['resultFormatterFile'];
+      if (strpos($resultFormatterFile, ':') === FALSE) {
+        // Normal absolute Path
+        $file = $resultFormatterFile;
+      } else {
+        // module:relative/path/ PATH
+        $parts = explode(':', $resultFormatterFile, 2);
+        if ($base_p = drupal_get_path('theme', $parts[0])) {
+          $file = $base_p . '/' . $parts[1];
+        } elseif ($base_p = drupal_get_path('module', $parts[0])) {
+          $file = $base_p . '/' . $parts[1];
+        } else {
+          $file = ''; 
+        }
+      }
+      if (is_readable($file)) {
+        if ($contents = file_get_contents($file)) {
+          return $contents;
+        } else {
+          return '';
+        }
+      }
+      break;
+  }
+}
 /**
 * Implements hook_field_widget_form().
 */
@@ -399,6 +468,22 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
   drupal_alter('gst_entityref_instance', $instance, $context);
   switch ($instance['widget']['type']) {
     case 'gst_entityref_autocomplete':
+
+      // We let the Field API handles multiple values for us, only take
+      // care of the one matching our delta.      
+      if (isset($items[$delta])) {
+        $items = array($items[$delta]);
+        $entity_id = $items[$delta]['target_id'];
+        $entities = entity_load($field['settings']['target_type'], array($entity_id));
+        
+        // Load the value for Input field to display
+        $inputResultText = gst_entityref_get_inputResultText($entities[$entity_id], $instance);        
+      }
+      else {
+        $items = array();
+        $inputResultText = '';
+      }
+      
       $settings = $instance['widget']['settings'];
       $jsonp = $settings['use_jsonp'];
       $gst_entityref_options = array(
@@ -411,7 +496,9 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
         'maxResults' => $settings['maxResults'],
         'minQueryLength' => $settings['minQueryLength'],
         'resultTextLocator' => 'inputResultText',
-        'resultFormatTemplate' => $instance['widget']['settings']['resultFormatterCustom'],
+        'resultFormatTemplate' => gst_entityref_get_resultFormatTemplate($instance),
+        'subFilter' => $instance['widget']['settings']['subFilter'],
+      	'subFilterDelimiter' => $instance['widget']['settings']['subFilterDelimiter'],
       );
       $element_ref = array(
       	'#type' => 'gst_entityref',
@@ -425,10 +512,12 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
         '#gst_entityref_options' => $gst_entityref_options,
         '#widget' => $instance['widget'],
       );      
-      $element_ref['gst_entityref_text'] = array(
+      $element_ref['target_id'] = array(
         '#type' => 'textfield',
+      	'#default_value' => $inputResultText,
         '#attributes' => array(
-        ),        
+        ),
+      	'#element_validate' => array('_gst_entityref_autocomplete_validate'),
       );
       
       break;
@@ -438,6 +527,19 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
   return $element_ref;
 }
 
+function _gst_entityref_autocomplete_validate($element, &$form_state, $form) {
+  // If a value was entered into the autocomplete...
+  $value = '';
+  if (!empty($element['#value'])) {
+    // Take "label (entity id)', match the id from parenthesis.
+    if (preg_match("/.+\((\d+)\)/", $element['#value'], $matches)) {
+      $value = $matches[1];
+    }
+  }
+
+  // Update the value of this element so the field can validate the product IDs.
+  form_set_value($element, $value, $form_state);
+}
 
 /**
  * Implements hook_field_widget_form().
@@ -637,9 +739,11 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
       }
       // Add the inputText value to the $match entry
       //ADFHI: Figure out why I need to turn sanitize off. If I turn it on, it passes & chars to browser for apostrophes      
-      $inputResultText = token_replace($inputResultTextTemplate, 
-        array('field_collection_item' => $entities[$entity_id]), array('sanitize' => FALSE));
-      $imatches[$entity_id]['inputResultText'] = $inputResultText . " (" . $entity_id . ")";
+//       $inputResultText = token_replace($inputResultTextTemplate, 
+//         array('field_collection_item' => $entities[$entity_id]), array('sanitize' => FALSE));      
+//       $imatches[$entity_id]['inputResultText'] = $inputResultText . " (" . $entity_id . ")";
+      $inputResultText = gst_entityref_get_inputResultText($entities[$entity_id], $instance);
+      $imatches[$entity_id]['inputResultText'] = $inputResultText;
       
       $vars = array(
         'result' => $imatches[$entity_id],
@@ -653,44 +757,16 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
     }
   }
   
-  
-  
   _drupal_jsonp_output($matches, $callback);
-  return;
-
-  
-  // When I get to "multiple tags" the following code will be useful to review
-  if ($type == 'tags') {
-    // The user enters a comma-separated list of tags. We only autocomplete the last tag.
-    $tags_typed = drupal_explode_tags($string);
-    $tag_last = drupal_strtolower(array_pop($tags_typed));
-    if (!empty($tag_last)) {
-      $prefix = count($tags_typed) ? implode(', ', $tags_typed) . ', ' : '';
-    }
-  }
-  else {
-    // The user enters a single tag.
-    $prefix = '';
-    $tag_last = $string;
-  }
-
-  if (!empty($tag_last)) {
-    // Get an array of matching entities.
-    $entity_labels = $handler->getReferencableEntities($tag_last, $instance['widget']['settings']['match_operator'], 10);
-
-    // Loop through the products and convert them into autocomplete output.
-    foreach ($entity_labels as $entity_id => $label) {
-      $key = "$label ($entity_id)";
-      // Names containing commas or quotes must be wrapped in quotes.
-      if (strpos($key, ',') !== FALSE || strpos($key, '"') !== FALSE) {
-        $key = '"' . str_replace('"', '""', $key) . '"';
-      }
-      $matches[$prefix . $key] = '<div class="reference-autocomplete">' . $label . '</div>';
-    }
-  }
-
 }
 
+function gst_entityref_get_inputResultText($entity, $instance) {
+  $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
+  $inputResultText = token_replace($inputResultTextTemplate,
+    array('field_collection_item' => $entity), array('sanitize' => FALSE));
+  $inputResultText .= " (" . $entity->internalIdentifier() . ")";  
+  return $inputResultText;
+}
 
 function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query) {
   if (!$query->alterTags['gst_entityref']) {
@@ -734,12 +810,28 @@ function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query)
   //ADFDONE: Add $conditions processing. Should be easy since all it does is copy it in.
   //ADFDONE: When adding conditions, have to replace %match with match value, and have to fix operator 'default' values.
   if (isset($query_extra['conditions'])) {
-    $conditions = $query_extra['conditions'];    
+    $subFilter = $widget['settings']['subFilter'];
+    $subFilterDelimiter = $widget['settings']['subFilterDelimiter'];
+    $conditions = $query_extra['conditions'];
     $match_operator = $widget['settings']['match_operator'];
-    $c_conditions = &$conditions->conditions();
-    _process_conditions($c_conditions, $match, $match_operator);
-    $q_conditions = &$query->conditions();    
-    $q_conditions = array_merge($q_conditions, $c_conditions);
+    if ($subFilter) {
+      // Break query into sub-filters on the subFilterDelimiter (usually a comma (,))
+      $match_list = explode($subFilterDelimiter, $match);
+      $q_conditions = &$query->conditions();
+      foreach ($match_list as $i => $submatch) {
+        //$c_conditions = clone $conditions->conditions();
+        $cref = $conditions->conditions();        
+        $c_conditions = unserialize(serialize($cref));      // This deep-copies the $conditions array
+        _process_conditions($c_conditions, $submatch, $match_operator, $i > 0);  // Run subMatch on all Matches except FIRST one
+        $q_conditions = array_merge($q_conditions, $c_conditions);
+      }
+    } else {
+      // Handle the query as one long string            
+      $c_conditions = &$conditions->conditions();
+      _process_conditions($c_conditions, $match, $match_operator);
+      $q_conditions = &$query->conditions();
+      $q_conditions = array_merge($q_conditions, $c_conditions);      
+    }
   }
   // Save the db_select SelectQuery object - we will need it LATER
   // - this is necessary because the EFQ returns a "partial" entity; it strips out ALL
@@ -761,7 +853,7 @@ function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query)
 //    if $value != %match, REMOVE that condition (or don't add it).
 //   NOTE: These 2nd and following $condition loops wil need to be added with db_and()
 
-function _process_conditions(&$conditions, $match, $match_operator) {
+function _process_conditions(&$conditions, $match, $match_operator, $subMatch = FALSE) {
   foreach($conditions as $key => $condition) {    
     if ($key[0] === '#' || empty($condition['operator'])) {
       // #conjunction OR Literal Condition - Skip
@@ -772,6 +864,7 @@ function _process_conditions(&$conditions, $match, $match_operator) {
         _process_conditions($cref, $match, $match_operator);
       } else {
         // Process Condition
+        $removeCondition = false;
         $value = isset($condition['value']) ? $condition['value'] : '';
         $op = isset($condition['operator']) ? $condition['operator'] : '';
 
@@ -781,13 +874,18 @@ function _process_conditions(&$conditions, $match, $match_operator) {
             $m_operator = $match_operator;
             break;
           default:
-            $m_operator = $op;
+            $m_operator = isset($op) ? $op : (is_array($value) ? 'IN' : '=');
           break;
         }
         
         switch ($value) {
-          case '%match':
+          case '%match':        // Dynamic Condition
             $c_value = $match;
+            break;
+          default:              // Static Condition
+            // Remove all Static Conditions from subMatches
+            $c_value = $value;
+            $removeCondition = $subMatch; 
             break;
         }
         switch ($m_operator) {
@@ -799,9 +897,15 @@ function _process_conditions(&$conditions, $match, $match_operator) {
             $c_operator = "LIKE";
             $c_value = $c_value.'%';
             break;
+          default:
+            $c_operator = $m_operator;
+            break;
         }        
         $conditions[$key]['value'] = $c_value;
         $conditions[$key]['operator'] = $c_operator;
+        if ($removeCondition) {
+          unset($conditions[$key]);
+        }
       }
     }
   }
@@ -1019,4 +1123,8 @@ function _buildQuery($field, $match = NULL, $match_operator, $limit = 0) {
   $qs = $query->__toString();
   
   return $query;
+}
+
+function _deepCopy($val) {
+  return unserialize(serialize($val));
 }
