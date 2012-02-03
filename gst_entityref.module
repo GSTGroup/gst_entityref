@@ -419,41 +419,6 @@ function gst_entityref_field_widget_info_alter(&$info) {
   $info['options_buttons']['field types'][] = 'entityreference';
 }
 
-function gst_entityref_get_resultFormatTemplate($instance) {
-  $resultFormatterType = $instance['widget']['settings']['resultFormatterType'];
-  switch ($resultFormatterType) {
-    case 'CUSTOM':
-      return $instance['widget']['settings']['resultFormatterCustom'];
-      break;
-    case 'FILE':
-      //ADFTODO: Perhaps process the template with vars? For now I just read it in, I could use
-      // bgs_helper_render_form_template() as a base and process it? Not sure why, but I could...?
-      // use drupal_get_path(type, name) to get module/theme path
-      $resultFormatterFile = $instance['widget']['settings']['resultFormatterFile'];
-      if (strpos($resultFormatterFile, ':') === FALSE) {
-        // Normal absolute Path
-        $file = $resultFormatterFile;
-      } else {
-        // module:relative/path/ PATH
-        $parts = explode(':', $resultFormatterFile, 2);
-        if ($base_p = drupal_get_path('theme', $parts[0])) {
-          $file = $base_p . '/' . $parts[1];
-        } elseif ($base_p = drupal_get_path('module', $parts[0])) {
-          $file = $base_p . '/' . $parts[1];
-        } else {
-          $file = ''; 
-        }
-      }
-      if (is_readable($file)) {
-        if ($contents = file_get_contents($file)) {
-          return $contents;
-        } else {
-          return '';
-        }
-      }
-      break;
-  }
-}
 /**
 * Implements hook_field_widget_form().
 */
@@ -541,74 +506,6 @@ function _gst_entityref_autocomplete_validate($element, &$form_state, $form) {
   form_set_value($element, $value, $form_state);
 }
 
-/**
- * Implements hook_field_widget_form().
- */
-function _entityreference_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
-  $handler = entityreference_get_handler($field);
-
-  if ($instance['widget']['type'] == 'gst_entityref_autocomplete') {
-
-    if ($instance['widget']['type'] == 'gst_entityref_autocomplete') {
-      // We let the Field API handles multiple values for us, only take
-      // care of the one matching our delta.
-      if (isset($items[$delta])) {
-        $items = array($items[$delta]);
-      }
-      else {
-        $items = array();
-      }
-    }
-
-    $entity_ids = array();
-    $entity_labels = array();
-
-    // Build an array of entities ID.
-    foreach ($items as $item) {
-      $entity_ids[] = $item['target_id'];
-    }
-
-    // Load those entities and loop through them to extract their labels.
-    $entities = entity_load($field['settings']['target_type'], $entity_ids);
-
-    foreach ($entities as $entity_id => $entity) {
-      $label = $handler->getLabel($entity);
-      $key = "$label ($entity_id)";
-      // Labels containing commas or quotes must be wrapped in quotes.
-      if (strpos($key, ',') !== FALSE || strpos($key, '"') !== FALSE) {
-        $key = '"' . str_replace('"', '""', $key) . '"';
-      }
-      $entity_labels[] = $key;
-    }
-
-    if ($instance['widget']['type'] == 'gst_entityref_autocomplete') {
-      $path = !empty($instance['widget']['settings']['path']) ? $instance['widget']['settings']['path'] : 'gst_entityref/autocomplete/single';
-      $element += array(
-        '#type' => 'textfield',
-        '#maxlength' => 1024,
-        '#default_value' => implode(', ', $entity_labels),
-        '#autocomplete_path' => $path . '/' . $field['field_name'] . '/' . $instance['entity_type'] . '/' . $instance['bundle'],
-        '#size' => $instance['widget']['settings']['size'],
-        //ADFTODO: Add Validation
-        //ADF'#element_validate' => array('_entityreference_autocomplete_validate'),
-      );
-      return array('target_id' => $element);
-    }
-    else {
-      $path = !empty($instance['widget']['settings']['path']) ? $instance['widget']['settings']['path'] : 'gst_entityref/autocomplete/tags';
-      $element += array(
-        '#type' => 'textfield',
-        '#maxlength' => 1024,
-        '#default_value' => implode(', ', $entity_labels),
-        '#autocomplete_path' => $path . '/' . $field['field_name'] . '/' . $instance['entity_type'] . '/' . $instance['bundle'],
-        '#size' => $instance['widget']['settings']['size'],
-        //ADFTODO: Add Validation
-        //ADF'#element_validate' => array('_entityreference_autocomplete_tags_validate'),
-      );
-      return $element;
-    }
-  }
-}
 
 /*
  * Adds a field to be used for searching/display/highlight
@@ -639,7 +536,7 @@ function gst_entityref_add_filter_field(array &$form, array $data) {
 * 		while "converted" correctly on the client, created 403 errors on the server, so I changed code.
 */
 function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $bundle_name) {
-  $string = $_GET[GST_QUERY_ARG];
+  $query_arg = $_GET[GST_QUERY_ARG];
   $callback = $_GET[GST_CALLBACK_ARG];
   
   $val = array(
@@ -663,14 +560,10 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
   }
 
   $handler = entityreference_get_handler($field);
-
-  $tag_last = $string;
-  //$entity_labels = $handler->getReferencableEntities($tag_last, $instance['widget']['settings']['match_operator'], 10);
-  //$query = _buildEntityFieldQuery($field, $tag_last, $instance['widget']['settings']['match_operator'], 10);
   
   $field['entity_type'] = $entity_type;
   $field['bundle_name'] = $bundle_name;
-  $efq = _buildQuery2($field, $tag_last, $instance['widget']['settings']['match_operator'], 20);
+  $efq = _buildEntityFieldQuery($field, $query_arg, $instance['widget']['settings']['match_operator'], 20);
   $efq->addMetaData('widget', $instance['widget']);
   //NOTE: The following is "hackish" but is *necessary* because of how the EFQ handles
   // query results. Problem is, the EFQ HURLS any fields that are added, and ONLY returns
@@ -683,8 +576,6 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
   $results = $efq->execute();
   $select_query = $efq->metaData['select_query'];
   $full_results = $select_query->execute();
-  //ADFHI: Complete the code to create the $matches
-  //ADFHI: Include the code that sets the inputText (set this to the arg in the $instance)
   // Build the $matches result set to send to the client 
   // (NOTE: This result set COULD have MULTIPLE entries for each FC item due to the taxonomy matches - so check for that.
   $mk_prefix = 'm_';
@@ -732,13 +623,13 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
             $imatches[$entity_id][$sk] = reset($v);          // Store the FIRST value in the s_{key} field
             $imatches[$entity_id][$k] = implode(',', $v);    // Store the delimited value in the {key} field
             // Try and see if the $match passed matches any of these values, if so, set that one, if not, set the FIRST value
-            //ADFHI: Add code to do the above (I should do this AFTER I move to array-based $match strings)
+            //ADFDONE: Add code to do the above (I should do this AFTER I move to array-based $match strings)
             //$imatches[$entity_id][$k] = reset($v); // Store the FIRST value in the non-multiple
           }        
         }
       }
       // Add the inputText value to the $match entry
-      //ADFHI: Figure out why I need to turn sanitize off. If I turn it on, it passes & chars to browser for apostrophes      
+      //ADFDONE: Figure out why I need to turn sanitize off. If I turn it on, it passes & chars to browser for apostrophes      
 //       $inputResultText = token_replace($inputResultTextTemplate, 
 //         array('field_collection_item' => $entities[$entity_id]), array('sanitize' => FALSE));      
 //       $imatches[$entity_id]['inputResultText'] = $inputResultText . " (" . $entity_id . ")";
@@ -758,6 +649,121 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
   }
   
   _drupal_jsonp_output($matches, $callback);
+}
+
+function _buildEntityFieldQuery($field, $match = NULL, $match_operator, $limit = 0) {
+  $query = new EntityFieldQuery();
+  $query->entityCondition('entity_type', $field['settings']['target_type']);
+  if ($field['settings']['handler_settings']['target_bundles']) {
+    $query->entityCondition('bundle', $field['settings']['handler_settings']['target_bundles'], 'IN');
+  }
+  if (isset($match)) {
+    $entity_info = entity_get_info($field['settings']['target_type']);
+    if (isset($entity_info['entity keys']['label'])) {
+      $query->propertyCondition($entity_info['entity keys']['label'], $match, $match_operator);
+    }
+    //$query->propertyCondition('title', $match, $match_operator);
+  }
+
+  // Add a generic entity access tag to the query.
+  $query->addTag($field['settings']['target_type'] . '_access');
+  //$query->addTag('entityreference'); // Hook = gst_entityref_query_entityreference_alter()
+
+
+  // --- NOTE ---
+  // I can't add the "joins" here and then expect them to be processed
+  // The problem is quite simple, if I add the "joins" here (first) then the first
+  // time they will EVER be processed will be upon the first AutoComplete AJAX request.
+  // By that time, the YUI code has ALREADY been sent to the client.
+  // I will need to create the "joins" early (before the Widget is sent to the client)
+  // and then later take that set of "joins" and perform the "join" operation.
+  // Probably I should create an API that allows the user to "specify" the
+  // Joins on "build" and then later, take that set of "joins" and then add them
+  // in the gst_entityref_query_gwst_entityref_alter() routine (adding them to the db_select() )
+  // --- NOTE ---
+
+  $query->addTag('gst_entityref'); // Hook = gst_entityref_query_gst_entityref_alter()
+  $query->addMetaData('field', $field);
+
+
+  $target_bundles = $field['settings']['handler_settings']['target_bundles'];
+  $tb = array();
+  foreach(array_keys($target_bundles) as $bundle_name) {
+    $f_field = field_info_field($bundle_name);
+    $tb[$bundle_name]['field'] = $f_field;
+    foreach($f_field['bundles'] as $entity_type => $entities) {
+      foreach($entities as $entity_name) {
+        $f_instance = field_info_instance($entity_type, $f_field['field_name'], $entity_name);
+        $tb[$bundle_name][$entity_type . "." . $entity_name] = $f_instance;
+      }
+    }
+  }
+
+  //---------------------\\
+
+  // I have decided that it is too ambitious to try and create a "dynamic" system
+  // that lets me define the "joins" using a single string. I would have to have
+  // extensive schema knowledge and understanding that I don't have.
+  // A better system would be to have a "routine" that uses a "tag" to fill the
+  // EntityRef with the joins. If I strongly specify how the joins are created
+  // later I can add a UI to that interface. At some point then beyond that
+  // I can add the "token" like linkage. So the dev of this widget wil be 3
+  // phased:
+  // 1) Code the joins in PHP (but tied to a specific field)
+  // 2) Add a UI that can add that data
+  // 3) Add the ability to create that information with the Token system.
+
+  //---------------------\\
+
+
+  //ADFHI: Clean up "settings" - I have them being stored in the $widget and the $query - need to clean it up.
+  $settings = array(
+    'match' => $match,
+    'match_operator' => $match_operator,    
+  );
+  $query->addMetaData('settings', $settings);
+
+  if ($limit > 0) {
+    $query->range(0, $limit);
+  }
+  return $query;
+}
+
+
+function gst_entityref_get_resultFormatTemplate($instance) {
+  $resultFormatterType = $instance['widget']['settings']['resultFormatterType'];
+  switch ($resultFormatterType) {
+    case 'CUSTOM':
+      return $instance['widget']['settings']['resultFormatterCustom'];
+      break;
+    case 'FILE':
+      //ADFTODO: Perhaps process the template with vars? For now I just read it in, I could use
+      // bgs_helper_render_form_template() as a base and process it? Not sure why, but I could...?
+      // use drupal_get_path(type, name) to get module/theme path
+      $resultFormatterFile = $instance['widget']['settings']['resultFormatterFile'];
+      if (strpos($resultFormatterFile, ':') === FALSE) {
+        // Normal absolute Path
+        $file = $resultFormatterFile;
+      } else {
+        // module:relative/path/ PATH
+        $parts = explode(':', $resultFormatterFile, 2);
+        if ($base_p = drupal_get_path('theme', $parts[0])) {
+          $file = $base_p . '/' . $parts[1];
+        } elseif ($base_p = drupal_get_path('module', $parts[0])) {
+          $file = $base_p . '/' . $parts[1];
+        } else {
+          $file = '';
+        }
+      }
+      if (is_readable($file)) {
+        if ($contents = file_get_contents($file)) {
+          return $contents;
+        } else {
+          return '';
+        }
+      }
+      break;
+  }
 }
 
 function gst_entityref_get_inputResultText($entity, $instance) {
@@ -786,7 +792,7 @@ function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query)
     }
   }
   //ADFTODO: Add code to handle alias conflicts in fields
-  //ADFHI: Add code to handle "sort order" - I should probably add this to the fields as an "option" for each field.
+  //ADFDONE: Add code to handle "sort order" - I should probably add this to the fields as an "option" for each field.
   $orders = array();
   if (isset($query_extra['fields'])) {
     foreach ($query_extra['fields'] as $f) {      
@@ -844,7 +850,7 @@ function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query)
   $qs = $query->__toString();
 }
 
-//ADFHI: Add processing for subFilter here.
+// Process subFilter here.
 // I think if I just loop thru ALL the $match entries (if $match has a delimter)
 // and do the following I can make it work easily.
 // 1) add all $conditions for $match[0] (the first "query").
@@ -911,12 +917,10 @@ function _process_conditions(&$conditions, $match, $match_operator, $subMatch = 
   }
 }
 
-function gst_entityref_gst_entityref_preformat_alter(&$vars) {
-  $v = $vars;
-//   $vars['modify'] = 'modify';
-//   $vars['results']['mod'] = 'modify';
-//   $vars['entities'][1]->modify = 'modify';
-}
+/*
+* FIELD FORMATTERS
+* ---------------------------------------------------------------------------
+*/
 
 /*
  * LOCAL FUNCTIONS
@@ -953,177 +957,8 @@ function _drupal_jsonp_output($var = NULL, $callback = NULL) {
   
 }
 
-function _buildEntityFieldQuery($field, $match = NULL, $match_operator = 'CONTAINS', $limit = 0) {
-  $query = new EntityFieldQuery();
-  $query->entityCondition('entity_type', $field['settings']['target_type']);
-  if ($field['settings']['handler_settings']['target_bundles']) {
-    $query->entityCondition('bundle', $field['settings']['handler_settings']['target_bundles'], 'IN');
-  }
-  if (isset($match)) {
-    $entity_info = entity_get_info($field['settings']['target_type']);
-    if (isset($entity_info['entity keys']['label'])) {
-      $query->propertyCondition($entity_info['entity keys']['label'], $match, $match_operator);
-    }
-    //$query->propertyCondition('title', $match, $match_operator);
-  }
-  
-  // Add a generic entity access tag to the query.
-  $query->addTag($field['settings']['target_type'] . '_access');
-  $query->addTag('entityreference');
-  $query->addMetaData('field', $field);
-  
-  // Add the sort option.
-  if (!empty($field['settings']['handler_settings']['sort'])) {
-    $sort_settings = $field['settings']['handler_settings']['sort'];
-    if ($sort_settings['type'] == 'property') {
-      $query->propertyOrderBy($sort_settings['property'], $sort_settings['direction']);
-    }
-    elseif ($sort_settings['type'] == 'field') {
-      list($field, $column) = explode(':', $sort_settings['field'], 2);
-      $query->fieldOrderBy($field, $column, $sort_settings['direction']);
-    }
-  }  
-  if ($limit > 0) {
-    $query->range(0, $limit);
-  }
-  return $query;  
-  
-}
-
-function _buildQuery2($field, $match = NULL, $match_operator, $limit = 0) {
-  $query = new EntityFieldQuery();
-  $query->entityCondition('entity_type', $field['settings']['target_type']);
-  if ($field['settings']['handler_settings']['target_bundles']) {
-    $query->entityCondition('bundle', $field['settings']['handler_settings']['target_bundles'], 'IN');
-  }
-  if (isset($match)) {
-    $entity_info = entity_get_info($field['settings']['target_type']);
-    if (isset($entity_info['entity keys']['label'])) {
-      $query->propertyCondition($entity_info['entity keys']['label'], $match, $match_operator);
-    }
-    //$query->propertyCondition('title', $match, $match_operator);
-  }
-  
-  // Add a generic entity access tag to the query.
-  $query->addTag($field['settings']['target_type'] . '_access');
-  //$query->addTag('entityreference'); // Hook = gst_entityref_query_entityreference_alter()
-  
-  
-  // --- NOTE ---
-  // I can't add the "joins" here and then expect them to be processed
-  // The problem is quite simple, if I add the "joins" here (first) then the first
-  // time they will EVER be processed will be upon the first AutoComplete AJAX request.
-  // By that time, the YUI code has ALREADY been sent to the client.
-  // I will need to create the "joins" early (before the Widget is sent to the client)
-  // and then later take that set of "joins" and perform the "join" operation.
-  // Probably I should create an API that allows the user to "specify" the 
-  // Joins on "build" and then later, take that set of "joins" and then add them
-  // in the gst_entityref_query_gwst_entityref_alter() routine (adding them to the db_select() )
-  // --- NOTE ---
-  
-  $query->addTag('gst_entityref'); // Hook = gst_entityref_query_gst_entityref_alter()
-  $query->addMetaData('field', $field);
-  
-  
-  $target_bundles = $field['settings']['handler_settings']['target_bundles'];
-  $tb = array();
-  foreach(array_keys($target_bundles) as $bundle_name) {
-    $f_field = field_info_field($bundle_name);
-    $tb[$bundle_name]['field'] = $f_field;
-    foreach($f_field['bundles'] as $entity_type => $entities) {
-      foreach($entities as $entity_name) {
-        $f_instance = field_info_instance($entity_type, $f_field['field_name'], $entity_name);
-        $tb[$bundle_name][$entity_type . "." . $entity_name] = $f_instance;
-      }
-    }
-  }
-  
-  //---------------------\\
-  
-  // I have decided that it is too ambitious to try and create a "dynamic" system
-  // that lets me define the "joins" using a single string. I would have to have
-  // extensive schema knowledge and understanding that I don't have.
-  // A better system would be to have a "routine" that uses a "tag" to fill the
-  // EntityRef with the joins. If I strongly specify how the joins are created
-  // later I can add a UI to that interface. At some point then beyond that
-  // I can add the "token" like linkage. So the dev of this widget wil be 3 
-  // phased:
-  // 1) Code the joins in PHP (but tied to a specific field)
-  // 2) Add a UI that can add that data
-  // 3) Add the ability to create that information with the Token system.
-  
-  //---------------------\\
 
 
-  //ADFHI: Clean up "settings" - I have them being stored in the $widget and the $query - need to clean it up.
-  $settings = array(
-    'match' => $match,
-    'match_operator' => $match_operator,    
-  );
-  $query->addMetaData('settings', $settings);
-  
-  if ($limit > 0) {
-    $query->range(0, $limit);
-  }
-  return $query;  
-}
-
-
-function _buildQuery($field, $match = NULL, $match_operator, $limit = 0) {
-  // Based upon what I can see in the SQL, I need to do the following to *just* get the FC/ERefs that the user wants:
-  // 1) Make a list that contains the following for each target_bundle
-  //    $entity_type (this is the 1st level, usually 'node')
-  //    $entity_name (this is the 2nd level, usually a content type, like 'gstcourse'
-  // 2) This 'target_bundle' list has to be added as Conditions to the Select Query
-  //    For each entry in target_bundles:
-  //      condition('entity_type', $entity_type)
-  //      condition('bundle', $entity_name) <- in the FC Table, the "bundle" column has the $entity_name
-  //    These are all conditions against table: "field_data_" . $f_field['field_name']
-  // 3) I need to ensure I *include* that table - in fact, that table is to become the BASE table for
-  //    the entire query (it is the center, all other Joins go out from it)
-  //
-  $target_bundles = $field['settings']['handler_settings']['target_bundles'];
-  $tb = array();
-  foreach(array_keys($target_bundles) as $bundle_name) {
-    $f_field = field_info_field($bundle_name);
-    $tb[$bundle_name]['field'] = $f_field;
-    foreach($f_field['bundles'] as $entity_type => $entities) {
-      foreach($entities as $entity_name) {
-        $f_instance = field_info_instance($entity_type, $f_field['field_name'], $entity_name);
-        $tb[$bundle_name][$entity_type . "." . $entity_name] = $f_instance;        
-      }
-    }
-  }
-  
-  $fc18 = field_collection_item_load(18);
-  
-  $query = db_select('field_data_field_c_lessons', 'c_lessons')
-    ->fields('c_lessons', array('field_c_lessons_value'))
-    ->fields('nlesson', array('nid', 'title'))
-    ->fields('ccl_label', array('field_ccl_label_value'))
-    ->fields('ncourse', array('nid', 'title'))
-    ->fields('tdata', array('name', 'description'));
-  $a1 = $query->innerJoin('node', 'ncourse', 'ncourse.nid = c_lessons.entity_id');
-  $a2 = $query->join('field_data_field_ccl_label', 'ccl_label', 'c_lessons.field_c_lessons_value = ccl_label.entity_id');
-  $a3 = $query->join('field_data_field_ccl_lesson', 'ccl_lesson', 'c_lessons.field_c_lessons_value = ccl_lesson.entity_id');
-  $a4 = $query->innerJoin('node', 'nlesson', 'nlesson.nid = ccl_lesson.field_ccl_lesson_nid');
-  $a5 = $query->join('taxonomy_index', 'tindex', 'tindex.nid = nlesson.nid');
-  $a6 = $query->innerJoin('taxonomy_term_data', 'tdata', 'tdata.tid = tindex.tid');  
-  $query
-    ->condition('nlesson.type', 'gstlesson')
-    ->condition(db_or()
-      ->condition('nlesson.title', '%' . $match . '%', 'LIKE')
-      ->condition('ncourse.title', '%' . $match . '%', 'LIKE')
-      ->condition('tdata.name', '%' . $match . '%', 'LIKE')
-      ->condition('tdata.description', '%' . $match . '%', 'LIKE')
-      );
-  if ($limit > 0) {
-    $query->range(0, $limit);
-  }
-  $qs = $query->__toString();
-  
-  return $query;
-}
 
 function _deepCopy($val) {
   return unserialize(serialize($val));
