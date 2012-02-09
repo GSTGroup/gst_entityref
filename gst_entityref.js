@@ -17,8 +17,10 @@
         var resultTextLocator = this.resultTextLocator;
         var alwaysShowList = this.alwaysShowList;
         var resultFormatTemplate = this.resultFormatTemplate;
+        var resultFormatter = this.resultFormatter; // gst_entityref_token_formatter | gst_entityref_server_formatter        
         var subFilter = this.subFilter;
         var subFilterDelimiter = this.subFilterDelimiter;
+        var queryDelay = this.queryDelay;
         
         // YUI Initialization
         var Y = YUI().use('node', 'autocomplete', 'autocomplete-highlighters', 'autocomplete-filters', function (Y) {
@@ -29,16 +31,21 @@
           var inputNode = Y.one(input_id).plug(Y.Plugin.AutoComplete, {
             //resultHighlighter: 'phraseMatch',
             resultHighlighter: customHighlighter,
-            //resultFilters: resultFilters,
-            //resultFilters: gst_entityref_no_filter,
+            //ADFTODO: resultFilters is hardcoded to only do phraseMatch filtering.
+            // Also, when I try to pass in the resultFilters (see 2 lines below) it does NOT work
             resultFilters: gst_entityref_filter_phraseMatch,
+            //resultFilters: resultFilters,
             maxResults: maxResults,
             minQueryLength: minQueryLength,
             resultTextLocator: resultTextLocator,
+            // The following will allow all filtering to take place on the SERVER - "token" process on the client
             //resultFormatter: gst_entityref_server_formatter,
-            resultFormatter: gst_entityref_token_formatter,
+            //resultFormatter: gst_entityref_token_formatter,
+            //resultFormatter: window[resultFormatter], // THIS DOES NOT WORK
+            resultFormatter: gst_entityref_formatter,
             alwaysShowList: alwaysShowList,
             //activateFirstItem: true,
+            queryDelay: queryDelay,
             
             //source: ['foo', 'bar', 'baz']
             source: source
@@ -118,6 +125,16 @@
             });            
           }
           
+          function gst_entityref_formatter(query, results) {
+            switch (resultFormatter) {
+              case 'gst_entityref_server_formatter':
+                return gst_entityref_server_formatter(query, results);
+                break;;
+              case 'gst_entityref_token_formatter':
+                return gst_entityref_token_formatter(query, results);
+                break;
+            }
+          }
           // Return the formatted string created by the server
           function gst_entityref_server_formatter(query, results) {
             // Iterate over the array of result objects and return the formattedResult string
@@ -126,8 +143,10 @@
               //Y.log(result, "info", "gst_entityref");
               var raw = result.raw;
               var result = raw.formattedResult;
-              var hr = Y.Highlight.all(result, query);
-              return result.raw.formattedResult;            
+              var hrResult = Y.Highlight.all(result, query, {'escapeHTML':false});
+              //Y.log("hr = " + hr, "info", "gst_entityref");
+              return hrResult;
+              //return result;            
             });
           }
           
@@ -137,7 +156,7 @@
             });
           }
           
-          //ADFHI: Add "highlighting" of subFilter matches "match,match"...
+          //ADFDONE: Add "highlighting" of subFilter matches "match,match"...
           function gst_entityref_token_formatter(query, results) {
             var row_num = 0;
             return Y.Array.map(results, function (result) {

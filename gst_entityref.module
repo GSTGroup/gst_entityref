@@ -109,6 +109,7 @@ function theme_gst_entityref($variables) {
   $element = $variables['element'];
   $attributes = &$variables['element']['#attributes'];
   $gst_entityref_options = $element['#gst_entityref_options'];
+  $textfield_name = $gst_entityref_options['textfield_name'];
     
   // Set unique id
   if (!isset($attributes['id'])) {
@@ -124,11 +125,11 @@ function theme_gst_entityref($variables) {
   if ($gst_entityref_options['jsonp']) {
     $source .= '&' . GST_CALLBACK_ARG . '={callback}';
   }
-    
+  
   // Fill GST EntityRef Options / Settings  
   $gst_entityref_options += array(
     'id' => $attributes['id'],
-    'input_id' => $element['target_id']['#id'],
+    'input_id' => $element[$textfield_name]['#id'],
     'source' => $source,
     //'alwaysShowList' => TRUE,      // For Testing - set to FALSE for Production
   );
@@ -145,9 +146,8 @@ function theme_gst_entityref($variables) {
   drupal_add_js('http://yui.yahooapis.com/3.4.1/build/yui/yui.js', 'external');
   
   // Begin Building Output
-  $output = '<div' . drupal_attributes($attributes) . ">\n";
-  $output .= 'GST Entity Ref Widget';
-  $output .= drupal_render($element['target_id']);
+  $output = '<div' . drupal_attributes($attributes) . ">\n";  
+  $output .= drupal_render($element[$textfield_name]);
   $output .= '</div>';
   
   return $output;
@@ -158,12 +158,14 @@ function theme_gst_entityref_result($vars) {
   $result = $vars['result'];
   $instance = $vars['instance'];
   $output = '';
-  $format = $instance['widget']['settings']['resultFormatterCustom'];
+  //$format = $instance['widget']['settings']['resultFormatterCustom'];
+  $format = gst_entityref_get_resultFormatTemplate($instance);
   // Format $values so it is of the format {key} = value (instead of key = value)
   $tokens = array(); 
   $values = array();
   foreach($result as $k => $v) {
-    $fkey = '{'.$k.'}';
+    if (is_object($v) || is_array($v)) { continue; }
+    $fkey = '{'.$k.'}';    
     $tokens[] = $fkey;
     $values[] = $v;
   }
@@ -238,7 +240,7 @@ function gst_entityref_field_widget_info() {
   $widgets['gst_entityref_autocomplete'] = array(
     'label' => t('GST Autocomplete'),
     'description' => t('An enhanced multi-column autocomplete text field.'),
-    'field types' => array('entityreference'),
+    'field types' => array('entityreference', 'node_reference'),
     'settings' => array(
       'match_operator' => 'CONTAINS',
       'size' => 60,
@@ -259,6 +261,30 @@ function gst_entityref_field_widget_info() {
     ),
   );
 
+  $widgets['gst_entityref_nr_autocomplete'] = array(
+    'label' => t('GST Reference Autocomplete'),
+    'description' => t('An enhanced multi-column autocomplete text field.'),
+    'field types' => array('node_reference'),
+    'settings' => array(
+      'match_operator' => 'CONTAINS',
+      'size' => 60,
+      // We don't have a default here, because it's not the same between
+      // the two widgets, and the Field API doesn't update default
+      // settings when the widget changes.
+    	'path' => '',
+    	'use_jsonp' => TRUE,
+  		'resultFormatterType' => 'TABLE',
+    	'resultFormatterCustom' => '',
+  		'resultFormatterFile' => '',
+  		'maxResults' => 20,
+  		'minQueryLength' => 2,
+  		'queryDelay' => 100,
+  		'subFilter' => TRUE,
+  		'subFilterDelimiter' => ',',
+  		'inputResultText' => '',  		
+    ),
+  );
+  
   return $widgets;
 }
 
@@ -431,6 +457,18 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
   // Allow any client form to update widget
   $context = array('field' => $field, 'form' => $form, 'form_state' => $form_state);
   drupal_alter('gst_entityref_instance', $instance, $context);
+  $field_type = $field['type'];
+  switch ($field_type) {
+    case 'entityreference':
+      $textfield_name = 'target_id';
+      $resultFormatter = 'gst_entityref_token_formatter';
+      break;
+      
+    case 'node_reference':
+      $textfield_name = 'nid';
+      $resultFormatter = 'gst_entityref_server_formatter';
+      break;
+  }
   switch ($instance['widget']['type']) {
     case 'gst_entityref_autocomplete':
 
@@ -453,32 +491,37 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
       $jsonp = $settings['use_jsonp'];
       $gst_entityref_options = array(
         'widget_type' => 'yui-std',
-        'resultFilters' => array('subWordMatch'),
+        //ADFTODO: Add support for StartsWith filtering - currently only support Contains/PhraseMatch
+        'resultFilters' => array('gst_entityref_filter_phraseMatch'),
         'field_name' => $field['field_name'],
         'entity_type' => $instance['entity_type'],
         'bundle_name' => $instance['bundle'],
         'jsonp' => $jsonp,
         'maxResults' => $settings['maxResults'],
         'minQueryLength' => $settings['minQueryLength'],
+        'queryDelay' => $settings['queryDelay'],
         'resultTextLocator' => 'inputResultText',
         'resultFormatTemplate' => gst_entityref_get_resultFormatTemplate($instance),
+        'resultFormatter' => $resultFormatter,
         'subFilter' => $instance['widget']['settings']['subFilter'],
       	'subFilterDelimiter' => $instance['widget']['settings']['subFilterDelimiter'],
+      	'textfield_name' => $textfield_name,
       );
       $element_ref = array(
       	'#type' => 'gst_entityref',
       	'#theme' => 'gst_entityref',
         '#tree' => TRUE,
-      	'#title' => 'GST Entity Ref T',
-        '#default_value' => 'GST Entity Ref DV',        
+      	'#title' => $instance['label'],
+        '#default_value' => '',        
         '#attributes'=> array(
           'class' => array('gst-entityref'),
           ),
         '#gst_entityref_options' => $gst_entityref_options,
         '#widget' => $instance['widget'],
       );      
-      $element_ref['target_id'] = array(
+      $element_ref[$textfield_name] = array(
         '#type' => 'textfield',
+        '#title' => $instance['label'],
       	'#default_value' => $inputResultText,
         '#attributes' => array(
         ),
@@ -529,6 +572,97 @@ function gst_entityref_add_filter_field(array &$form, array $data) {
   $form['filter_fields'] += $data;
 }
 
+function _get_node_reference_matches_standard($field, $instance, $options) {
+  // Avoid useless work
+  if (!count($field['settings']['referenceable_types'])) {
+    return array();
+  }
+  
+  $query = db_select('node', 'n');
+  $node_nid_alias   = $query->addField('n', 'nid');
+  $node_title_alias = $query->addField('n', 'title', 'node_title');
+  $node_type_alias  = $query->addField('n', 'type',  'node_type');
+  $query->addTag('node_access');
+  $query->addMetaData('id', ' _node_reference_potential_references_standard');
+  
+  if (is_array($field['settings']['referenceable_types'])) {
+    $query->condition('n.type', $field['settings']['referenceable_types'], 'IN');
+  }
+  
+  if ($options['string'] !== '') {
+    switch ($options['match']) {
+      case 'CONTAINS':
+        $query->condition('n.title', '%' . $options['query_arg'] . '%', 'LIKE');
+        break;
+  
+      case 'STARTS_WITH':
+        $query->condition('n.title', $options['query_arg'] . '%', 'LIKE');
+        break;
+  
+      case 'equals':
+      default: // no match type or incorrect match type: use "="
+        $query->condition('n.title', $options['query_arg']);
+        break;
+    }
+  }
+  
+  if ($options['ids']) {
+    $query->condition('n.nid', $options['ids'], 'IN');
+  }
+  
+//   if ($options['limit']) {
+//     $query->range(0, $options['limit']);
+//   }
+  
+  $query
+  ->orderBy($node_title_alias)
+  ->orderBy($node_type_alias);
+  $qs = $query->__toString();
+  $result = $query->execute()->fetchAll();
+  $imatches = array();
+  $matches = array();
+  // Load Nodes
+  foreach ($result as $node) {
+    $nids[] = $node->nid;
+  }
+  $nodes = node_load_multiple($nids);
+  foreach ($result as $row) {
+    $entity_id = $row->nid;
+    $node = $nodes[$entity_id];
+    $imatches[$entity_id] = (array) $row;
+    //$imatches[$entity_id]['#entity'] = (array) $node;
+    $inputResultText = gst_entityref_get_inputResultText($node, $instance);
+    $imatches[$entity_id]['inputResultText'] = $inputResultText;
+    $vars = array(
+      'result' => $node,
+      'instance' => $instance,      
+    );
+    $imatches[$entity_id]['formattedResult'] = theme('gst_entityref_result', $vars);
+
+    $matches[] = _mark_nonvalues($imatches[$entity_id], array('nid', 'node_type')); 
+  }
+  return $matches;  
+}
+
+function _get_node_reference_matches($field, $instance, $options) {
+  // Fill in default options.
+  $options += array(
+    'query_arg' => '',
+    'callback' => '',
+  );
+
+  $matches = FALSE;
+  if (module_exists('views') && !empty($field['settings']['view']['view_name'])) {
+    $matches = _get_node_reference_matches_views($field, $instance, $options);
+  }
+  
+  if ($matches === FALSE) {
+    $matches = _get_node_reference_matches_standard($field, $instance, $options);
+  }
+  
+  return $matches;  
+}
+
 /**
 * Menu callback: autocomplete the label of an entity.
 * NOTE: We use query= and callback= URL Args *instead* of standard Drupal /%/% args for
@@ -537,118 +671,124 @@ function gst_entityref_add_filter_field(array &$form, array $data) {
 */
 function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $bundle_name) {
   $query_arg = $_GET[GST_QUERY_ARG];
-  $callback = $_GET[GST_CALLBACK_ARG];
-  
-  $val = array(
-    '0' => "val1 bob/jack $type $field_name $entity_type $bundle_name",
-    '1' => "val2 jack/mary $type $field_name $entity_type $bundle_name",
-    '2' => "val3 bob/mam $type $field_name $entity_type $bundle_name",
-    '3' => "val4 $type $field_name $entity_type $bundle_name",
-  );
-  
-  
+  $callback = $_GET[GST_CALLBACK_ARG];     
   $field = field_info_field($field_name);
+  $field_type = $field['type']; // entityreference | node_reference | user_reference
   $instance = field_info_instance($entity_type, $field_name, $bundle_name);
   // Allow any client form to update widget
   $context = array('field' => $field, 'form' => Null, 'form_state' => Null);
   drupal_alter('gst_entityref_instance', $instance, $context);  
   
-  $matches = array();      // Un-Indexed list of Matches (this is what we MUST return to JSONP)
-  $imatches = array();     // Indexed list of Matches (indexed by entity_id)
-  if (!$field || !$instance || $field['type'] != 'entityreference' || !field_access('edit', $field, $entity_type)) {
-    return MENU_ACCESS_DENIED;
-  }
-
-  $handler = entityreference_get_handler($field);
-  
-  $field['entity_type'] = $entity_type;
-  $field['bundle_name'] = $bundle_name;
-  $efq = _buildEntityFieldQuery($field, $query_arg, $instance['widget']['settings']['match_operator'], 20);
-  $efq->addMetaData('widget', $instance['widget']);
-  //NOTE: The following is "hackish" but is *necessary* because of how the EFQ handles
-  // query results. Problem is, the EFQ HURLS any fields that are added, and ONLY returns
-  // an "entity" records, so it doesn't matter that I just went out to the DB and grabbed
-  // a set of 8 tables, all I get back is the ENTITY. While I can understand this, there
-  // are *times* when I want what I asked for (ie. the set of field results).
-  // Now, I could junk the EFQ entirely, and use a db_select() (which might be better),
-  // but I wrote it this way for now. THAT is the reason I run the $efq->execute() and then later
-  // run the $select_query->execute().
-  $results = $efq->execute();
-  $select_query = $efq->metaData['select_query'];
-  $full_results = $select_query->execute();
-  // Build the $matches result set to send to the client 
-  // (NOTE: This result set COULD have MULTIPLE entries for each FC item due to the taxonomy matches - so check for that.
-  $mk_prefix = 'm_';
-  $sk_prefix = 's_';
-  if (!empty($full_results)) {
-    foreach($full_results as $record) {
-      $rec = (array)$record; // Convert stdClass to Array (so we can merge)
-      $entity_id = $rec['entity_id'];
-      if (isset($imatches[$entity_id])) {
-        $imatches[$entity_id]['#multiple'] = isset($imatches[$entity_id]['#multiple']) ? $imatches[$entity_id]['#multiple']+1 : 2;
-        // Create "multiple" entries for each entry
-        foreach($rec as $k => $v) {
-          if ($k[0] === '#' || !isset($v)) { continue; }
-          if (is_array($imatches[$entity_id][$k])) {
-            // This Key is a Multi-Value - add NEW value (if it is the same as an existing, it will do NOTHING, since array is associative)            
-            $imatches[$entity_id][$k][$v] = $v;
-          } elseif (isset($rec[$k]) && $imatches[$entity_id][$k] != $rec[$k]) {
-            // New Value Exists (not NULL), not the same as Existing - need to convert to an array to store both.
-            $existing = $imatches[$entity_id][$k];
-            $imatches[$entity_id][$k] = array(
-              $existing => $existing,
-              $v => $v,
-            );
+  $options = array(
+    'query_arg' => $query_arg,
+    'callback' => $callback,
+    'match' => $instance['widget']['settings']['match_operator'],
+  );
+  switch ($field_type) {
+    case 'node_reference':
+      $matches = _get_node_reference_matches($field, $instance, $options);
+      _drupal_jsonp_output($matches, $callback);
+      break;
+      
+    case 'entityreference':    
+      $matches = array();      // Un-Indexed list of Matches (this is what we MUST return to JSONP)
+      $imatches = array();     // Indexed list of Matches (indexed by entity_id)
+      if (!$field || !$instance || $field['type'] != 'entityreference' || !field_access('edit', $field, $entity_type)) {
+        return MENU_ACCESS_DENIED;
+      }
+    
+      $handler = entityreference_get_handler($field);
+      
+      $field['entity_type'] = $entity_type;
+      $field['bundle_name'] = $bundle_name;
+      $efq = _buildEntityFieldQuery($field, $query_arg, $instance['widget']['settings']['match_operator'], 20);
+      $efq->addMetaData('widget', $instance['widget']);
+      //NOTE: The following is "hackish" but is *necessary* because of how the EFQ handles
+      // query results. Problem is, the EFQ HURLS any fields that are added, and ONLY returns
+      // an "entity" records, so it doesn't matter that I just went out to the DB and grabbed
+      // a set of 8 tables, all I get back is the ENTITY. While I can understand this, there
+      // are *times* when I want what I asked for (ie. the set of field results).
+      // Now, I could junk the EFQ entirely, and use a db_select() (which might be better),
+      // but I wrote it this way for now. THAT is the reason I run the $efq->execute() and then later
+      // run the $select_query->execute().
+      $results = $efq->execute();
+      $select_query = $efq->metaData['select_query'];
+      $full_results = $select_query->execute();
+      // Build the $matches result set to send to the client 
+      // (NOTE: This result set COULD have MULTIPLE entries for each FC item due to the taxonomy matches - so check for that.
+      $mk_prefix = 'm_';
+      $sk_prefix = 's_';
+      if (!empty($full_results)) {
+        foreach($full_results as $record) {
+          $rec = (array)$record; // Convert stdClass to Array (so we can merge)
+          $entity_id = $rec['entity_id'];
+          if (isset($imatches[$entity_id])) {
+            $imatches[$entity_id]['#multiple'] = isset($imatches[$entity_id]['#multiple']) ? $imatches[$entity_id]['#multiple']+1 : 2;
+            // Create "multiple" entries for each entry
+            foreach($rec as $k => $v) {
+              if ($k[0] === '#' || !isset($v)) { continue; }
+              if (is_array($imatches[$entity_id][$k])) {
+                // This Key is a Multi-Value - add NEW value (if it is the same as an existing, it will do NOTHING, since array is associative)            
+                $imatches[$entity_id][$k][$v] = $v;
+              } elseif (isset($rec[$k]) && $imatches[$entity_id][$k] != $rec[$k]) {
+                // New Value Exists (not NULL), not the same as Existing - need to convert to an array to store both.
+                $existing = $imatches[$entity_id][$k];
+                $imatches[$entity_id][$k] = array(
+                  $existing => $existing,
+                  $v => $v,
+                );
+              } else {
+                // Not an array, but New value either doesn't exist, or is same as existing - do nothing            
+              }
+            }
           } else {
-            // Not an array, but New value either doesn't exist, or is same as existing - do nothing            
+            $imatches[$entity_id] = $rec;        
           }
         }
-      } else {
-        $imatches[$entity_id] = $rec;        
-      }
-    }
-    // Load the Entity objects for Token Processing
-    $target_entity_type = $field['settings']['target_type'];
-    $entities = entity_load($target_entity_type, array_keys($imatches));
-    // Now fix all the multi-values (convert to delimited strings)
-    $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
-    foreach ($imatches as $entity_id => $rec) {
-      if (isset($rec['#multiple']) && $rec['#multiple']) {
-        // Handle matches that had multiple matches with the same item_collection entity_id
-        // (this likely means the FC has multiple "term" matches)
-        foreach ($rec as $k => $v) {
-          if (is_array($v)) {
-            $mk = $mk_prefix . $k;
-            $sk = $sk_prefix . $k;
-            $imatches[$entity_id][$sk] = reset($v);          // Store the FIRST value in the s_{key} field
-            $imatches[$entity_id][$k] = implode(',', $v);    // Store the delimited value in the {key} field
-            // Try and see if the $match passed matches any of these values, if so, set that one, if not, set the FIRST value
-            //ADFDONE: Add code to do the above (I should do this AFTER I move to array-based $match strings)
-            //$imatches[$entity_id][$k] = reset($v); // Store the FIRST value in the non-multiple
-          }        
+        // Load the Entity objects for Token Processing
+        $target_entity_type = $field['settings']['target_type'];
+        $entities = entity_load($target_entity_type, array_keys($imatches));
+        // Now fix all the multi-values (convert to delimited strings)
+        $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
+        foreach ($imatches as $entity_id => $rec) {
+          if (isset($rec['#multiple']) && $rec['#multiple']) {
+            // Handle matches that had multiple matches with the same item_collection entity_id
+            // (this likely means the FC has multiple "term" matches)
+            foreach ($rec as $k => $v) {
+              if (is_array($v)) {
+                $mk = $mk_prefix . $k;
+                $sk = $sk_prefix . $k;
+                $imatches[$entity_id][$sk] = reset($v);          // Store the FIRST value in the s_{key} field
+                $imatches[$entity_id][$k] = implode(',', $v);    // Store the delimited value in the {key} field
+                // Try and see if the $match passed matches any of these values, if so, set that one, if not, set the FIRST value
+                //ADFDONE: Add code to do the above (I should do this AFTER I move to array-based $match strings)
+                //$imatches[$entity_id][$k] = reset($v); // Store the FIRST value in the non-multiple
+              }        
+            }
+          }
+          // Add the inputText value to the $match entry
+          //ADFDONE: Figure out why I need to turn sanitize off. If I turn it on, it passes & chars to browser for apostrophes      
+    //       $inputResultText = token_replace($inputResultTextTemplate, 
+    //         array('field_collection_item' => $entities[$entity_id]), array('sanitize' => FALSE));      
+    //       $imatches[$entity_id]['inputResultText'] = $inputResultText . " (" . $entity_id . ")";
+          $inputResultText = gst_entityref_get_inputResultText($entities[$entity_id], $instance);
+          $imatches[$entity_id]['inputResultText'] = $inputResultText;
+          
+          $vars = array(
+            'result' => $imatches[$entity_id],
+            'instance' => $instance,      
+          );
+          $imatches[$entity_id]['formattedResult'] = theme('gst_entityref_result', $vars);
+          
+          
+          // Now create the un-indexed version to send to the CLIENT in JSON
+          $matches[] = _mark_nonvalues($imatches[$entity_id], array('entity_id', 'bundle', 'revision_id', 'entity_type'));      
         }
       }
-      // Add the inputText value to the $match entry
-      //ADFDONE: Figure out why I need to turn sanitize off. If I turn it on, it passes & chars to browser for apostrophes      
-//       $inputResultText = token_replace($inputResultTextTemplate, 
-//         array('field_collection_item' => $entities[$entity_id]), array('sanitize' => FALSE));      
-//       $imatches[$entity_id]['inputResultText'] = $inputResultText . " (" . $entity_id . ")";
-      $inputResultText = gst_entityref_get_inputResultText($entities[$entity_id], $instance);
-      $imatches[$entity_id]['inputResultText'] = $inputResultText;
       
-      $vars = array(
-        'result' => $imatches[$entity_id],
-        'instance' => $instance,      
-      );
-      $imatches[$entity_id]['formattedResult'] = theme('gst_entityref_result', $vars);
-      
-      
-      // Now create the un-indexed version to send to the CLIENT in JSON
-      $matches[] = $imatches[$entity_id];      
-    }
-  }
-  
-  _drupal_jsonp_output($matches, $callback);
+      _drupal_jsonp_output($matches, $callback);
+    break;
+  }  
 }
 
 function _buildEntityFieldQuery($field, $match = NULL, $match_operator, $limit = 0) {
@@ -729,6 +869,18 @@ function _buildEntityFieldQuery($field, $match = NULL, $match_operator, $limit =
   return $query;
 }
 
+// Change the key's of non-values from "key" to "#key" so they are skipped
+function _mark_nonvalues($entity, $nonvalues) {
+  $marked_e = $entity;
+  foreach($nonvalues as $nv) {
+    if (array_key_exists($nv, $marked_e)) {
+      $newk = '#' . $nv;
+      $marked_e[$newk] = $marked_e[$nv];
+      unset($marked_e[$nv]);
+    } 
+  }
+  return $marked_e;
+}
 
 function gst_entityref_get_resultFormatTemplate($instance) {
   $resultFormatterType = $instance['widget']['settings']['resultFormatterType'];
@@ -767,11 +919,36 @@ function gst_entityref_get_resultFormatTemplate($instance) {
 }
 
 function gst_entityref_get_inputResultText($entity, $instance) {
-  $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
-  $inputResultText = token_replace($inputResultTextTemplate,
-    array('field_collection_item' => $entity), array('sanitize' => FALSE));
-  $inputResultText .= " (" . $entity->internalIdentifier() . ")";  
+  $field = field_info_field($instance['field_name']);
+  $field_type = $field['type'];
+  switch ($field_type) {
+    case 'entityreference':
+      $target_type = $field['settings']['target_type'];  // eg. field_collection_item
+      $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
+      $inputResultText = token_replace($inputResultTextTemplate,
+        array($target_type => $entity), array('sanitize' => FALSE));
+      $inputResultText .= " (" . $entity->internalIdentifier() . ")";      
+      break;
+    case 'node_reference':
+      $nid = $entity->nid;      
+      $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
+      $inputResultText = token_replace($inputResultTextTemplate,
+        array('node' => $entity), array('sanitize' => FALSE));
+      $inputResultText .= " (" . $nid . ")";      
+      break;
+  }
   return $inputResultText;
+}
+
+function gst_entityref_get_label($entity, $instance, $template = NULL) {
+  $field = field_info_field($instance['field_name']);
+  $target_type = $field['settings']['target_type']; // eg. field_collection_item
+  if (!$template) {
+    $template = $instance['widget']['settings']['inputResultText'];
+  }
+  $label = token_replace($template,
+    array($target_type => $entity), array('sanitize' => FALSE));  
+  return $label;
 }
 
 function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query) {
@@ -921,6 +1098,149 @@ function _process_conditions(&$conditions, $match, $match_operator, $subMatch = 
 * FIELD FORMATTERS
 * ---------------------------------------------------------------------------
 */
+
+function gst_entityref_field_formatter_info() {
+  return array(
+    'gst_entityref_label' => array(
+      'label' => t('GST Label'),
+      'description' => t('Display the label of the referenced entities using the gst_entityref module.'),
+      'field types' => array('entityreference'),
+      'settings' => array(
+        'link' => FALSE,
+        'template' => '',
+      ),
+    ),
+  );  
+}
+
+/**
+* Implements hook_field_formatter_settings_form().
+*/
+function gst_entityref_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+  
+  switch ($display['type']) {
+    case 'gst_entityref_label':
+      $element['link'] = array(
+        '#title' => t('Link label to the referenced entity (GST)'),
+        '#type' => 'checkbox',
+        '#default_value' => $settings['link'],
+      );
+      $element['template'] = array(
+        '#title' => t('Template string to use to build label.'),
+        '#type' => 'textfield',
+        '#size' => 60,
+        '#maxlength' => 4096,
+        '#default_value' => $settings['template'],
+        '#description' => t('Enter a tokenized string to use as the label for this entity reference.<br>'.
+          'Tokens are allowed. If left blank, it will use the widget "Input field result text".')
+      );      
+      break;
+      
+  }
+
+  return $element;
+}
+
+
+/**
+ * Implements hook_field_formatter_settings_summary().
+ */
+function gst_entityref_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $summary = array();
+  switch ($display['type']) {
+    case 'gst_entityref_label':
+      $context = array('field' => $field, 'form' => Null, 'form_state' => Null);
+      drupal_alter('gst_entityref_instance', $instance, $context);      
+      $summary[] = $settings['link'] ? t('Link to the referenced entity (GST)') : t('No link');
+      $summary[] = $settings['template'] ? $settings['template'] : 
+        'Default: ' . $instance['widget']['settings']['inputResultText'];
+      break;
+  }
+
+  return implode('<br />', $summary);
+}
+
+
+/**
+ * Implements hook_field_formatter_prepare_view().
+ */
+function gst_entityref_field_formatter_prepare_view($entity_type, $entities, $field, $instances, $langcode, &$items, $displays) {
+  $target_ids = array();
+
+  // Collect every possible entity attached to any of the entities.
+  foreach ($entities as $id => $entity) {
+    foreach ($items[$id] as $delta => $item) {
+      $target_ids[] = $item['target_id'];
+    }
+  }
+
+  if ($target_ids) {
+    $target_entities = entity_load($field['settings']['target_type'], $target_ids);
+
+    // Iterate through the fieldable entities again to attach the loaded data.
+    foreach ($entities as $id => $entity) {
+      $rekey = FALSE;
+
+      foreach ($items[$id] as $delta => $item) {
+        // Check whether the referenced entity could be loaded.
+        if (isset($target_entities[$item['target_id']])) {
+          // Replace the instance value with the term data.
+          $items[$id][$delta]['entity'] = $target_entities[$item['target_id']];
+        }
+        // Otherwise, unset the instance value, since the entity does not exist.
+        else {
+          unset($items[$id][$delta]);
+          $rekey = TRUE;
+        }
+      }
+
+      if ($rekey) {
+        // Rekey the items array.
+        $items[$id] = array_values($items[$id]);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ * Returns a renderable $element array
+ */
+function gst_entityref_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+    
+  //ADFHI: Add code to the field_collection.module:fc_entity_info() that sets a new "label callback"
+  // I should add the ability to set on ANY Field Collection a setting for the "label" that uses "tokens"
+  // I don't need to add this code to gst_entityref, I can add it either to the FC module, or add it to
+  // another module (gst_field_collections) - I could use fc_entity_info_alter() to add it.
+  switch ($display['type']) {
+    case 'gst_entityref_label':
+      $context = array('field' => $field, 'form' => Null, 'form_state' => Null);
+      drupal_alter('gst_entityref_instance', $instance, $context);      
+
+      foreach ($items as $delta => $item) {
+        $label = gst_entityref_get_label($item['entity'], $instance, $display['settings']['template']);        
+        // If the link is to be displayed and the entity has a uri, display a link.
+        // Note the assignment ($url = ) here is intended to be an assignment.
+        if ($display['settings']['link'] && ($uri = entity_uri($field['settings']['target_type'], $item['entity']))) {
+          $element[$delta] = array('#markup' => l($label, $uri['path'], $uri['options']));
+        }
+        else {
+          $element[$delta] = array('#markup' => check_plain($label));
+        }
+      }
+      break;
+
+  }
+
+  return $element;
+}
+
 
 /*
  * LOCAL FUNCTIONS

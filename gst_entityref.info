@@ -3,6 +3,7 @@ description = Provides a widget that can be used to select an Entity Reference
 package = GST
 core = 7.x
 files[] = gst_entityref.module
+;files[] = gst_entityref.fc.inc
 
 ; Views handlers
 ;files[] = gst_auto_terms.views_default.inc
