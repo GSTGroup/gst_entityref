@@ -1466,6 +1466,7 @@ function gst_entityref_field_formatter_info() {
     'gst_entityref_label' => array(
       'label' => t('GST Label'),
       'description' => t('Display the label of the referenced entities using the gst_entityref module.'),
+      //ADFTODO: Add user_reference support to gst_entityref
       'field types' => array('entityreference', 'node_reference'),
       'settings' => array(
         'link' => FALSE,
