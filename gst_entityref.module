@@ -275,12 +275,12 @@ function gst_entityref_field_widget_info() {
     'label' => t('GST Autocomplete'),
     'description' => t('An enhanced multi-column autocomplete text field.'),
     'field types' => array('entityreference', 'node_reference', 'user_reference'),
+    //NOTE: When adding a setting that is needed by Javascript Client, add it to the 
+    // _widget_form() below to the gst_entityref_options[] array
     'settings' => array(
       'match_operator' => 'CONTAINS',
       'size' => 60,
-      // We don't have a default here, because it's not the same between
-      // the two widgets, and the Field API doesn't update default
-      // settings when the widget changes.
+      'lbMinWidth' => 200, // width of listbox in pixels
   		'path' => '',
   		'use_jsonp' => TRUE,
   		'resultFormatterType' => 'TABLE',
@@ -468,6 +468,11 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
             $instance['entity_type']
           );          
           break;
+        case 'user_reference':
+          $token_types = array(
+            $instance['entity_type']
+          );
+          break;          
       }
       // Add token module replacements fields      
       $form['tokens'] = array(
@@ -488,7 +493,16 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
         '#type' => 'markup',
         '#markup' => theme('token_tree', $token_type),
       );    
-    }    
+    }
+
+    $form['minLbWidth'] = array(
+          '#type' => 'textfield',
+          '#title' => t('Minimum width of results listbox (pixels)'),
+          '#default_value' => isset($settings['minLbWidth']) ? $settings['minLbWidth'] : 200,
+          '#element_validate' => array('_element_validate_integer_positive'),
+          '#required' => TRUE,
+    );
+    
   }
 
   // HOOK_gst_entityref_settings_form_alter
@@ -576,8 +590,7 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
         $inputResultText = '';
       }
       
-      $settings = $instance['widget']['settings'];
-      $jsonp = $settings['use_jsonp'];
+      $settings = $instance['widget']['settings']; 
       $gst_entityref_options = array(
         'widget_type' => 'yui-std',
         //ADFTODO: Add support for StartsWith filtering - currently only support Contains/PhraseMatch
@@ -585,17 +598,18 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
         'field_name' => $field['field_name'],
         'entity_type' => $instance['entity_type'],
         'bundle_name' => $instance['bundle'],
-        'jsonp' => $jsonp,
+        'jsonp' => $settings['use_jsonp'],
         'maxResults' => $settings['maxResults'],
         'minQueryLength' => $settings['minQueryLength'],
         'queryDelay' => $settings['queryDelay'],
         'resultTextLocator' => 'inputResultText',
         'resultFormatTemplate' => gst_entityref_get_resultFormatTemplate($instance),
         'resultFormatter' => $resultFormatter,
-        'subFilter' => $instance['widget']['settings']['subFilter'],
-      	'subFilterDelimiter' => $instance['widget']['settings']['subFilterDelimiter'],
+        'subFilter' => $settings['subFilter'],
+      	'subFilterDelimiter' => $settings['subFilterDelimiter'],
       	'textfield_name' => $textfield_name,
       	'tokenReplacement' => $tokenReplacement,
+      	'minLbWidth' => $settings['minLbWidth'],
       );
       $element_ref = array(
       	'#type' => 'gst_entityref',
@@ -612,6 +626,7 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
       $element_ref[$textfield_name] = array(
         '#type' => 'textfield',
         '#title' => $instance['label'],
+        '#size' => $settings['size'],
       	'#default_value' => $inputResultText,
         '#attributes' => array(
         ),
@@ -712,7 +727,7 @@ function _get_user_reference_matches_standard($field, $instance, $options) {
   }
   */
   
-  if ($options['ids']) {
+  if (isset($options['ids']) && $options['ids']) {
     $query->condition('u.uid', $options['ids'], 'IN');
   }
   
@@ -817,6 +832,7 @@ function _get_node_reference_matches_standard($field, $instance, $options) {
 //     $query->range(0, $options['limit']);
 //   }
   
+  //ADFTODO: Should I remove the orderBy and ONLY use the orderBy passed in query_extray?
   $query
   ->orderBy($node_title_alias)
   ->orderBy($node_type_alias);
@@ -905,6 +921,7 @@ function _get_node_reference_matches($field, $instance, $options) {
 function _flatten_matches($field, $instance, $full_results = array()) {
   $field_type = $field['type'];
   $imatches = array();
+  $matches = array();
   switch ($field_type) {
     case 'entityreference':
       $entity_id_name = 'entity_id';
@@ -1325,7 +1342,7 @@ function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query)
       $method = $j['method'];
       $talias = $query->$method($j['table'], $j['alias'], $j['condition'], $j['args']);
     }
-  }
+  }  
   //ADFTODO: Add code to handle alias conflicts in fields
   //ADFDONE: Add code to handle "sort order" - I should probably add this to the fields as an "option" for each field.
   $orders = array();
@@ -1382,8 +1399,7 @@ function gst_entityref_query_gst_entityref_alter(QueryAlterableInterface $query)
   // node_reference & user_reference don't use entity_field_query so if we don't find one, dont' save it 
   if (isset($efq)) {    
     $efq->metaData['select_query'] = $query;
-  }
-  
+  }  
   // Remove the Alter Tag so I don't end up here AGAIN
   $query->alterTags['gst_entityref'] = 0;
   $qs = $query->__toString();
@@ -1519,7 +1535,7 @@ function gst_entityref_field_formatter_settings_summary($field, $instance, $view
     case 'gst_entityref_label':
       $context = array('field' => $field, 'form' => Null, 'form_state' => Null);
       drupal_alter('gst_entityref_instance', $instance, $context);      
-      $summary[] = $settings['link'] ? t('Link to the referenced entity (GST)') : t('No link');
+      $summary[] = $settings['link'] ? t('Link to the referenced entity') : t('No link');
       $summary[] = $settings['template'] ? $settings['template'] : 
         'Default: ' . $instance['widget']['settings']['inputResultText'];
       break;

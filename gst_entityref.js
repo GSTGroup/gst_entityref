@@ -1,7 +1,6 @@
 
   
 (function ($) {
-
   
   //
   // GST_ENTITYREF Behavior Processing
@@ -22,9 +21,73 @@
         var subFilterDelimiter = this.subFilterDelimiter;
         var queryDelay = this.queryDelay;
         var tokenReplacement = this.tokenReplacement;
+        var minLbWidth = this.minLbWidth;
         
         // YUI Initialization
-        var Y = YUI().use('node', 'autocomplete', 'autocomplete-highlighters', 'autocomplete-filters', function (Y) {
+        var Y = YUI().use('node', 'autocomplete', 'autocomplete-highlighters', 'autocomplete-filters', 'base', 'plugin', function (Y) {
+          
+          // YUI AC Plugins - needs use('base','plugin')
+          //-------------------------------------------------------------------
+          var HOST          = 'host',
+              BOUNDING_BOX  = 'boundingBox',
+              CONTENT_BOX   = 'contentBox';
+        
+          Y.ACResizeContent = Y.Base.create('ac-resize-content', Y.Plugin.Base, [], {
+            _afterRender : function (e) {
+                var host = this.get(HOST),                    
+                    hostCb = host.get(CONTENT_BOX);
+                hostCb.setStyle('overflow', 'auto');
+            },
+            
+            _afterResults : function(e) {
+                var host = this.get(HOST),
+                    hostBb, hostCb, bbRegion, cbRegion, vpRegion;
+          
+                if (host.get('visible')) {
+                    hostBb = host.get(BOUNDING_BOX),
+                    hostCb = host.get(CONTENT_BOX);
+                    vpRegion = Y.DOM.viewportRegion();
+                    
+                    // Set boundingBox Size (width)
+                    minWidth = (vpRegion.width < minLbWidth) ? vpRegion.width : minLbWidth;                    
+                    bbRegion = hostBb.get('region');
+                    if (bbRegion.width < minWidth) {
+                      hostBb.setStyle('width', minWidth + 'px'); // set width                      
+                      if (bbRegion.left + minWidth > vpRegion.width) { // set left                        
+                        hostBb.setStyle('left', (vpRegion.width - minWidth) + 'px');
+                      }
+                    }
+                    
+                    // Set contentBox Size (height)
+                    hostCb.setStyle('height', '');
+                    cbRegion = hostCb.get('region');
+                    if (cbRegion.height + cbRegion.top > vpRegion.height) {
+                        hostCb.setStyle('height', (vpRegion.height - cbRegion.top) + 'px');
+                    }
+                }
+            },
+          
+            initializer : function () {
+                this.doAfter('render', this._afterRender);
+                this.doAfter('results', this._afterResults);
+            },
+          
+            destructor : function () {
+                var host = this.get(HOST),
+                    hostCb = host.get(CONTENT_BOX);
+                hostCb.setStyle('overflow', '');
+            }
+          }, {
+            NS : 'scaler'
+          });
+          // END YUI AC PLUGINS
+          
+                   
+          
+          
+          // Configure and handle YUI AutoComplete Widget
+          //-------------------------------------------------------------------
+          
           // Add the yui3-skin-sam class to the body so the default
           // AutoComplete widget skin will be applied.
           Y.one('body').addClass('yui3-skin-sam');
@@ -47,6 +110,9 @@
             alwaysShowList: alwaysShowList,
             //activateFirstItem: true,
             queryDelay: queryDelay,
+            plugins :  [
+                        {fn : Y.ACResizeContent}
+                       ],            
             
             //source: ['foo', 'bar', 'baz']
             source: source
@@ -70,7 +136,7 @@
             // Save this query so it can be referred to later
             e.target.lastQuery = query;
           });
-          
+                    
           // This provides NO filter. It relies upon the server to handle filtering.
           // This is primarilyh used for when we filter on a "term" that is not displayed.
           //ADFHI: Fix the no_filter - I should add a filter that filters on ALL passed values
