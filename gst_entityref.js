@@ -21,6 +21,7 @@
         var subFilter = this.subFilter;
         var subFilterDelimiter = this.subFilterDelimiter;
         var queryDelay = this.queryDelay;
+        var tokenReplacement = this.tokenReplacement;
         
         // YUI Initialization
         var Y = YUI().use('node', 'autocomplete', 'autocomplete-highlighters', 'autocomplete-filters', function (Y) {
@@ -96,11 +97,12 @@
                 var found;
                 var match;                
                 for (var mkey in matches) {
-                  match = matches[mkey];
+                  match = matches[mkey];                  
                   found = false;
                   match_loop:
                   for (var key in raw) {
                     if (key == undefined) { continue; }
+                    if (key[0] == '_' || key[0] == '#') { continue; }
                     v = raw[key];
                     // Search for the "query" in ANY location of ANY field, if it exists, set found to TRUE, and move to next "match" to test
                     if (v.toLowerCase().indexOf(match) !== -1) {
@@ -139,13 +141,30 @@
           function gst_entityref_server_formatter(query, results) {
             // Iterate over the array of result objects and return the formattedResult string
             // for each result entry
+            var row_num = 0;
             return Y.Array.map(results, function (result) {
               //Y.log(result, "info", "gst_entityref");
+              row_num++;
               var raw = result.raw;
-              var result = raw.formattedResult;
-              var hrResult = Y.Highlight.all(result, query, {'escapeHTML':false});
-              //Y.log("hr = " + hr, "info", "gst_entityref");
-              return hrResult;
+              var result = raw['#formattedResult']; // have to ref this way due to the # prefix
+              var vals = new Array();
+              vals['row_even_odd'] = (row_num % 2 == 0) ? 'even' : 'odd';
+              result = Y.Lang.sub(result, vals);       // replace row_even_odd with even|odd
+              result = result.replace( /{[a-zA-Z_-]*}/g,"");   // Remove any remaining {token} entries              
+              var needle = (subFilter) ? query.split(subFilterDelimiter) : $query;
+              // The following has issues with HTML tags - so I wrote some alternate code
+              //var hrResult = Y.Highlight.all(result, needle, {'escapeHTML':false});              
+              //Y.log("hrResult = " + hrResult, "info", "gst_entityref");
+              var hrNodes = $('<div>'+result+'</div>').find('*').each(function() {
+                if (this.childElementCount == 0) {
+                  this.innerHTML = Y.Highlight.all(this.innerHTML, needle); 
+                }
+              });
+              // For some reason, hrNodes points to the <div result> entry, not the <div> entry
+              // so, we have to go to hrNodes parent (the <div>) and then get THAT html() - works fine now.
+              var hrText = hrNodes.parent().html();
+              return hrText;
+              //return hrResult;
               //return result;            
             });
           }
