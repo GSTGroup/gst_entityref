@@ -153,21 +153,21 @@ function theme_gst_entityref($variables) {
   // Ensure Value in $textfield_name is correct (just in case someone sets the nid = some # we want to ensure it has the inputResultFormat() there
   gst_entityref_set_textfield_value($element, $textfield_name);
   
-  if ($action_links = gst_isset_or($element['action_links'])) {
-    if (!gst_isset_or($action_links['#attributes']['id'], FALSE)) {
-      $element['action_links']['#attributes']['id'] = gst_get_unique_id('gst-entityref-action-links-');      
+  if ($action_links = gstu_isset_or($element['action_links'])) {
+    if (!gstu_isset_or($action_links['#attributes']['id'], FALSE)) {
+      $element['action_links']['#attributes']['id'] = gstu_get_unique_id('gst-entityref-action-links-');      
     }
     $gst_entityref_options['action_links_id'] = $element['action_links']['#attributes']['id'];
     //ADFTODO: Not sure if this is needed, for now I just search for the class instead of the ID
     foreach($action_links['#links'] as $lnum => $link) {
-      if (!gst_isset_or($link['attributes']['id'], FALSE)) {
-        $element['action_links']['#links'][$lnum]['attributes']['id'] = gst_get_unique_id('gst-entityref-action-link-');
+      if (!gstu_isset_or($link['attributes']['id'], FALSE)) {
+        $element['action_links']['#links'][$lnum]['attributes']['id'] = gstu_get_unique_id('gst-entityref-action-link-');
       }
     }
   }
   
   // CTOOLS-Modal Support
-  if ($ctools_modal = gst_isset_or($gst_entityref_options['ctools-modal'], FALSE)) {
+  if ($ctools_modal = gstu_isset_or($gst_entityref_options['ctools-modal'], FALSE)) {
     ctools_include('modal');
     ctools_modal_add_js();    
   }
@@ -889,7 +889,7 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
       //ADF//$element['#parents'] = $element['#array_parents'] = array($element_name);
       $element[$textfield_name] = array(
         '#type' => 'textfield',
-        '#title' => gst_isset_or($element['#title'], $instance['label']),
+        '#title' => gstu_isset_or($element['#title'], $instance['label']),
         '#size' => $settings['size'],
       	'#default_value' => $inputResultText,
         '#attributes' => array(          
@@ -901,7 +901,7 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
       
       // Add Action-Links
       $action_links = array();
-      $entity_id_val = gst_isset_or($entity_id, FALSE);
+      $entity_id_val = gstu_isset_or($entity_id, FALSE);
       //ADFTODO: I should change the "add" button to be a drop-down (like in views add/arrange) 
       //  if there are more than one RefType specified. 
       if ($reftype = gst_entityref_get_reftype($field, $instance)) {
@@ -912,7 +912,7 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
             'class' => array('add-link')
           ),
         );
-        $add_link = gst_isset_or($settings['add_link'], FALSE);
+        $add_link = gstu_isset_or($settings['add_link'], FALSE);
         switch ($add_link) {
           case GST_LINK_CTOOLS_MODAL:
             $link['href'] =  "gst_entityref/action/add/{$reftype}/nojs/ctools";
@@ -941,7 +941,7 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
         'title' => t('edit'),
         'attributes' => array('class' => array('edit-link')),
       );            
-      $edit_link = gst_isset_or($settings['edit_link'], FALSE);
+      $edit_link = gstu_isset_or($settings['edit_link'], FALSE);
       switch ($edit_link) {
         case GST_LINK_CTOOLS_MODAL:
           $link['href'] =  "gst_entityref/action/edit/$entity_id_val/nojs/ctools";
@@ -1573,11 +1573,11 @@ function gst_entityref_action_callback($op, $nid, $js, $modal_type) {
   switch ($op) {
     case 'add':
       $type = $nid;    // $nid stores the $type if we are adding a record
-      $type_name = gst_isset_or($node_types[$type], $type);
+      $type_name = gstu_isset_or($node_types[$type], $type);
       $title = t('Add new !type', array('!type' => $type_name));
       $node = (object) array(
         'uid' => $user->uid,
-        'name' => gst_isset_or($user->name, ''),
+        'name' => gstu_isset_or($user->name, ''),
         'type' => $type,
         'language' => LANGUAGE_NONE
       );
@@ -1591,7 +1591,7 @@ function gst_entityref_action_callback($op, $nid, $js, $modal_type) {
       ctools_include('modal');      
       $output = ctools_modal_form_wrapper($type . '_node_form', $form_state);
       
-      if (gst_isset_or($form_state['executed'], FALSE)) {
+      if (gstu_isset_or($form_state['executed'], FALSE)) {
         $new_node_title = $form_state['values']['title'];
         $new_node_nid = $form_state['nid'];
         $output = array();
@@ -1606,7 +1606,7 @@ function gst_entityref_action_callback($op, $nid, $js, $modal_type) {
     case 'edit':           
       if ($node = node_load($nid)) {
         $type = $node->type;
-        $type_name = gst_isset_or($node_types[$type], $type);
+        $type_name = gstu_isset_or($node_types[$type], $type);
         $node_title = $node->title;
         $title = t('Edit !type: !title', array('!type' => $type_name, '!title' => $node_title));
         $form_state['build_info']['args'] = array($node);
@@ -1628,7 +1628,7 @@ function gst_entityref_action_callback($op, $nid, $js, $modal_type) {
           '</div>');        
       }
       
-      if (gst_isset_or($form_state['executed'], FALSE)) {
+      if (gstu_isset_or($form_state['executed'], FALSE)) {
         $new_node_title = $form_state['values']['title'];
         $new_node_nid = $form_state['nid'];
         $output = array();

@@ -10,5 +10,7 @@ files[] = gst_entityref.module
 ;files[] = gst_auto_terms_handler_field_taxonomy_index_users_tid.inc
 
 ;dependencies[] = autoload 
+dependencies[] = gstu
+
 ;php = 5.2
 version = "7.x-1.0-alpha1"
