@@ -15,6 +15,11 @@
 define('GST_QUERY_ARG', 'query');
 define('GST_CALLBACK_ARG', 'callback');
 
+define('GST_LINK_CTOOLS_MODAL', 'CTOOLS-MODAL');
+define('GST_LINK_JQUERY_MODAL', 'JQUERY-MODAL');
+define('GST_LINK_NORMAL', 'NORMAL');
+
+
 /**
 * Implements hook_help().
 */
@@ -59,28 +64,39 @@ function gst_entityref_init() {
 function gst_entityref_menu() {
   $items = array();
 
-  $items['gst_entityref/search_jsonp/%/%/%/%/%/%'] = array(
+//   $items['gst_entityref/search_jsonp/%/%/%/%/%/%'] = array(
+//     'title' => 'GST Entity Reference Autocomplete',
+//     'page callback' => 'gst_entityref_autocomplete_callback',
+//     'page arguments' => array(2, 3, 4, 5, 6, 7),
+//     'access callback' => TRUE,
+//     'type' => MENU_CALLBACK,
+//   );
+  
+//   $items['gst_entityref/search_jsonp/%/%/%/%/%'] = array(
+//     'title' => 'GST Entity Reference Autocomplete',
+//     'page callback' => 'gst_entityref_autocomplete_callback',
+//     'page arguments' => array(2, 3, 4, 5, 6),
+//     'access callback' => TRUE,
+//     'type' => MENU_CALLBACK,
+//   );
+
+  $items['gst_entityref/search_jsonp/%/%/%/%'] = array(
     'title' => 'GST Entity Reference Autocomplete',
     'page callback' => 'gst_entityref_autocomplete_callback',
-    'page arguments' => array(2, 3, 4, 5, 6, 7),
+    'page arguments' => array(2, 3, 4, 5),
+    //ADFHI: Add better security!
     'access callback' => TRUE,
     'type' => MENU_CALLBACK,
   );
-  
-  $items['gst_entityref/search_jsonp/%/%/%/%/%'] = array(
-      'title' => 'GST Entity Reference Autocomplete',
-      'page callback' => 'gst_entityref_autocomplete_callback',
-      'page arguments' => array(2, 3, 4, 5, 6),
-      'access callback' => TRUE,
-      'type' => MENU_CALLBACK,
-  );
 
-  $items['gst_entityref/search_jsonp/%/%/%/%'] = array(
-        'title' => 'GST Entity Reference Autocomplete',
-        'page callback' => 'gst_entityref_autocomplete_callback',
-        'page arguments' => array(2, 3, 4, 5),
-        'access callback' => TRUE,
-        'type' => MENU_CALLBACK,
+  // gst_entityref/action/2%op/3%node/4%ctools_js/5%modal-type
+  // eg: gst_entityref/action/edit/8/ajax/ctools
+  $items['gst_entityref/action/%/%/%ctools_js/%'] = array(
+    'title' => 'GST Entity Reference Action Callback',
+    'page callback' => 'gst_entityref_action_callback',
+    'page arguments' => array(2, 3, 4, 5),
+    'access callback' => TRUE,
+    'type' => MENU_CALLBACK,
   );
   
   return $items;
@@ -134,6 +150,37 @@ function theme_gst_entityref($variables) {
     //'alwaysShowList' => TRUE,      // For Testing - set to FALSE for Production
   );
   
+  // Ensure Value in $textfield_name is correct (just in case someone sets the nid = some # we want to ensure it has the inputResultFormat() there
+  gst_entityref_set_textfield_value($element, $textfield_name);
+  
+  if ($action_links = gst_isset_or($element['action_links'])) {
+    if (!gst_isset_or($action_links['#attributes']['id'], FALSE)) {
+      $element['action_links']['#attributes']['id'] = gst_get_unique_id('gst-entityref-action-links-');      
+    }
+    $gst_entityref_options['action_links_id'] = $element['action_links']['#attributes']['id'];
+    //ADFTODO: Not sure if this is needed, for now I just search for the class instead of the ID
+    foreach($action_links['#links'] as $lnum => $link) {
+      if (!gst_isset_or($link['attributes']['id'], FALSE)) {
+        $element['action_links']['#links'][$lnum]['attributes']['id'] = gst_get_unique_id('gst-entityref-action-link-');
+      }
+    }
+  }
+  
+  // CTOOLS-Modal Support
+  if ($ctools_modal = gst_isset_or($gst_entityref_options['ctools-modal'], FALSE)) {
+    ctools_include('modal');
+    ctools_modal_add_js();    
+  }
+  
+
+  // Add CSS/Stylesheet
+  drupal_add_css(drupal_get_path('module', 'gst_entityref') . '/gst_entityref.css',
+    array('group' => CSS_DEFAULT, 'every_page' => TRUE));
+    
+  // Load YUI Base Javascript (all other files will be lazy-loaded with YUI.use() )
+  //drupal_add_js('http://yui.yahooapis.com/3.4.1/build/yui/yui-min.js', 'external');
+  drupal_add_js('http://yui.yahooapis.com/3.4.1/build/yui/yui.js', 'external');
+  
   // Add gst_entityref.js file to include Behaviors
   $js_path = drupal_get_path('module', 'gst_entityref') . '/gst_entityref.js';
   drupal_add_js($js_path);
@@ -141,13 +188,11 @@ function theme_gst_entityref($variables) {
   // Set Drupal.Settings DOM Object
   drupal_add_js(array('gst_entityref' => array('#'. $attributes['id'] => $gst_entityref_options)), 'setting');
   
-  // Load YUI Base Javascript (all other files will be lazy-loaded with YUI.use() )
-  //drupal_add_js('http://yui.yahooapis.com/3.4.1/build/yui/yui-min.js', 'external');
-  drupal_add_js('http://yui.yahooapis.com/3.4.1/build/yui/yui.js', 'external');
   
   // Begin Building Output
-  $output = '<div' . drupal_attributes($attributes) . ">\n";  
-  $output .= drupal_render($element[$textfield_name]);
+  $output = '<div' . drupal_attributes($attributes) . ">\n";    
+  //$output .= drupal_render($element[$textfield_name]);
+  $output .= drupal_render_children($element);
   $output .= '</div>';
   
   return $output;
@@ -162,7 +207,7 @@ function theme_gst_entityref_result($vars) {
   $field_type = $field['type'];  
   $tokenReplacement = $instance['widget']['settings']['tokenReplacement'];
   $output = '';
-  $format = gst_entityref_get_resultFormatTemplate($instance);
+  $format = gst_entityref_get_resultFormatTemplate($instance, $vars);
   
   // Create $tokens/$values arrays
   $tokens = array();
@@ -246,6 +291,11 @@ function gst_entityref_tokens($type, $tokens, array $data = array(), array $opti
   }
 }
 
+/*
+ * Implements HOOK_entity_load();
+ * Ensure that any Entity that is loaded has the host_entity and host_entity_id and host_entity_type set
+ * (this is used to fix a bug in entity that makes it not work for tokens)
+ */
 function gst_entityref_entity_load(array $entities, $type) {
   if ($type == 'field_collection_item' && isset($entities)) {
     foreach ($entities as $entity) {
@@ -259,8 +309,141 @@ function gst_entityref_entity_load(array $entities, $type) {
  * FIELD
  */
 
+/*
+ * FormAPI Support
+ * 
+ */
 
+/*
+ * To define a gst_entityref using FormAPI you must specify the following:
+ * 
+ * #field_type: entityreference | node_reference | user_reference
+ * #settings => array(
+      'match_operator' => 'CONTAINS',
+      'size' => 60,
+      'lbMinWidth' => 200, // width of listbox in pixels
+  		'path' => '',
+  		'use_jsonp' => TRUE,
+  		'resultFormatterType' => 'TABLE',
+  		'resultFormatterCustom' => '',
+  		'resultFormatterFile' => '',
+  		'maxResults' => 20,
+  		'minQueryLength' => 2,
+  		'queryDelay' => 100,
+  		'subFilter' => TRUE,
+  		'subFilterDelimiter' => ',',
+  		'inputResultText' => '',
+  		'tokenReplacement' => 'SERVER',  		  		
+    ),
+ *
+ * FOR #field_type = 'entityreference':
+ *   #target_type: the target target type that the entityreference points to (this is going to be a type of entity, for example
+ *     'field_collection_item' or 'node'
+ *   #entity_type: the entity_type of the SOURCE (eg. 'node' or 'user')
+ *   #bundle: the bundle containing the SOURCE (eg. 'article' or 'blog')
+ */
+function gst_entityref_element_info() {
+  $type['gst_entityref_autocomplete'] = array(
+    '#input' => TRUE,
+    '#tree' => TRUE,
+    '#process' => array('gst_entityref_element_process'),
+    //'#value_callback' => 'date_popup_element_value_callback',
+    '#theme' => array('gst_entityref'),
+  );
+  
+  return $type;
+}
 
+/* There are two options here:
+ * 1) Specify 100% of the needed settings for $instance and $field in 
+ *     #instance and #field element settings (the routine will fill in SOME
+ *     of the defaults, but not everything)
+ *     IN this case, '#entity_type' => 'formapi' and '#bundle' => 'formname' (as in drupal_get_form)
+ * 2) Specify a entity_type/bundle/field_name that matches an existing field from which
+ *    to pull all the needed "settings" (this is by far the EASISET way)
+ * 
+ */
+function gst_entityref_element_process($element, $form_state, $form) {
+  
+  // Attempt to load FormAPI settings from FieldAPI (if using a real field)
+  // We try to get the $field_name from the #field_name setting first, this allows us to name the field one thing
+  //  but pull the FieldAPI settings from another field.
+  $field_name = isset($element['#fieldapi_name']) ? $element['#fieldapi_name'] : $element['#name'];
+  $entity_type = isset($element['#entity_type']) ? $element['#entity_type'] : 'formapi';
+  $bundle = isset($element['#bundle']) ? $element['#bundle'] : FALSE;
+  $field = field_info_field($field_name);
+  $instance = field_info_instance($entity_type, $field_name, $bundle);
+    
+  // Load Default Field Settings (these go in $field)
+  if ($field) {
+    $field_type = $field['type'];
+  } else {
+    $field_type = isset($element['#field_type']) ? $element['#field_type'] : FALSE;
+    if (!$field_type) {      
+      $field_type = 'entityreference';  
+      drupal_set_message(
+        t("GST_ENTITYREF: No #field_type specified for <em>%f</em>. Using default of '%ft'",
+          array('%f' => $element['#name'], '%ft' => $field_type)
+         ), 
+        'warning');
+    }
+    $field = field_info_field_types($field_type);
+    $field['type'] = $field_type;
+    $field['field_name'] = $element['#name'];
+    $field['settings'] = array();    
+  }
+  
+  switch ($field_type) {
+    case 'entityreference':
+      if (!isset($field['settings']['target_type'])) {
+        $target_type = isset($element['#target_type']) ? $element['#target_type'] : FALSE;
+        if (!$target_type) {
+          $target_type = 'node';
+          drupal_set_message(
+            t("GST_ENTITYREF: No #target_type specified for <em>%f</em>. Using default of '%tt'",
+              array('%f' => $element['#name'], '%tt' => $target_type)
+            ),
+            'warning');        
+        }
+      }
+      break;
+    case 'node_reference':
+      break;
+    case 'user_reference':
+      // Set Defaults
+      break;
+  }
+  // Load Default Widget Settings (these go in $instance)
+  if (!$instance) {
+    $widget = field_info_widget_types('gst_entityref_autocomplete');
+    $settings = isset($element['#settings']) ? $element['#settings'] : array();
+    $settings += $widget['settings'];      
+    $instance = array(
+      'field_name' => $element['#name'],
+      'entity_type' => $entity_type,
+      'bundle' => $bundle,
+      'label' => $element['#title'],
+      'widget' => array(
+        'type' => 'gst_entityref_autocomplete',
+        'settings' => $settings,      
+      ),    
+    );
+  }
+
+  // Save $instance & $field (primarily used for FormAPI fields
+  $element['#gst_formapi'] = array(
+    '#instance' => $instance,      // we save this for FormAPI usage later in callback
+    '#field' => $field,            // we save this for FormAPI usage later in callback
+  );
+
+  $delta = 0;
+  $items = array();
+  $lang = 'und';
+  
+  $eref = gst_entityref_field_widget_form($form, $form_state, $field, $instance, $lang, $items, $delta, $element);
+  
+  return $eref;
+}
 
 /*
  * WIDGET
@@ -278,9 +461,10 @@ function gst_entityref_field_widget_info() {
     //NOTE: When adding a setting that is needed by Javascript Client, add it to the 
     // _widget_form() below to the gst_entityref_options[] array
     'settings' => array(
+      'tag' => '',                       // Tag used for identifying "groups" of gst_entityref settings
       'match_operator' => 'CONTAINS',
       'size' => 60,
-      'lbMinWidth' => 200, // width of listbox in pixels
+      'minLbWidth' => 200, // width of listbox in pixels
   		'path' => '',
   		'use_jsonp' => TRUE,
   		'resultFormatterType' => 'TABLE',
@@ -292,7 +476,11 @@ function gst_entityref_field_widget_info() {
   		'subFilter' => TRUE,
   		'subFilterDelimiter' => ',',
   		'inputResultText' => '',
-  		'tokenReplacement' => 'SERVER',  		  		
+  		'tokenReplacement' => 'SERVER',      
+      'edit_link' => '',                 // Display an "edit" lihk for editing the selected Entity
+      'add_link' => '',  		  		       // Display an "add" link for adding a new Entity of the indicated type
+      'select_function' => '',           // Javascript function executed after Selection of an item in the list
+      'token_fields' => '',              // This is a list of token values to put in each row in the RAW stream for use by the client
     ),
   );
 /*
@@ -336,6 +524,14 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
   $form = array();
   $field_type = $field['type']; // entityreference | node_reference | user_reference
   if ($widget['type'] == 'gst_entityref_autocomplete') {
+    $form['tag'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Settings Tag'),
+      '#default_value' => isset($settings['tag']) ? $settings['tag'] : '',
+      '#description' => t('Tag used for identifying this field entry.<br>'.
+        'This can be used in the <em>HOOK_gst_entityref_instance_alter()</em> as a way to identify groups of fields that have the same instance settings (instead of capturing by field name)'),
+    );
+    
     $form['use_jsonp'] = array(
     	'#type' => 'checkbox',
       '#title' => t('Use JSONP Request/Callback'),
@@ -453,6 +649,17 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
     );
     
     if (module_exists('token')) {
+      $form['token_fields'] = array(
+        '#type' => 'textarea',
+        '#title' => t('Token Fields'),
+        '#default_value' => isset($settings['token_fields']) ? $settings['token_fields'] : '',
+        '#required' => FALSE,
+        '#rows' => 5,
+        '#description' => t('Enter a list of extra field values to be added to the result set of each row.<br>'.
+          'Enter one field per line formatted as follows: field_name=[token-string]<br>'.          
+          'You can also use any token field as indicated below.'),
+      );
+      
       // set $token_types depending on $field_type
       switch ($field_type) {
         case 'entityreference':
@@ -496,12 +703,53 @@ function gst_entityref_field_widget_settings_form($field, $instance) {
     }
 
     $form['minLbWidth'] = array(
-          '#type' => 'textfield',
-          '#title' => t('Minimum width of results listbox (pixels)'),
-          '#default_value' => isset($settings['minLbWidth']) ? $settings['minLbWidth'] : 200,
-          '#element_validate' => array('_element_validate_integer_positive'),
-          '#required' => TRUE,
+      '#type' => 'textfield',
+      '#title' => t('Minimum width of results listbox (pixels)'),
+      '#default_value' => isset($settings['minLbWidth']) ? $settings['minLbWidth'] : 200,
+      '#element_validate' => array('_element_validate_integer_positive'),
+      '#required' => TRUE,
     );
+    
+    //ADFHI: For ctools-modal, add some "settings" for the add/edit forms (adding a class of 'ctools-modal-STYLE' will cause
+    // ctools to look for a Drupal.settings.STYLE entry that will be used as ctools-settings. Any "text" can be put 
+    // in place of STYLE. Default ones that already exist are: modal-popup-large, modal-popup-medium, modal-popup-small.
+    // It would be recommended to use a similar approach, as in: ctools-modal-modal-popup-new would look in:
+    // Drupal.settings.modal-popup-new for the settings. See the DOM entry of the default ones for examples of what settings
+    // are allowed.
+    $form['add_link'] = array(
+      '#type' => 'select',
+      '#title' => t('Add Link'),
+      '#default_value' => isset($settings['add_link']) ? $settings['add_link'] : '',
+      '#description' => t("Display an edit link button used to Add the a new Entity of the indicated type."),
+      '#options' => array(
+        '' => t('- None -'),
+        GST_LINK_CTOOLS_MODAL => t('Show a modal add link (ctools)'),
+        GST_LINK_JQUERY_MODAL => t('Show a modal add link (jQueryUI)'),
+        GST_LINK_NORMAL => t('Show a normal add link'),
+      ),      
+    );
+        
+    $form['edit_link'] = array(
+      '#type' => 'select',
+      '#title' => t('Edit Link'),
+      '#default_value' => isset($settings['edit_link']) ? $settings['edit_link'] : '',
+      '#description' => t("Display an edit link button used to edit the currently selected Entity."),
+      '#options' => array(
+        '' => t('- None -'),
+        GST_LINK_CTOOLS_MODAL => t('Show a modal edit link (ctools)'),
+        GST_LINK_JQUERY_MODAL => t('Show a modal edit link (jQueryUI)'),
+        GST_LINK_NORMAL => t('Show a normal edit link'),
+      ),      
+    );
+    
+    $form['select_function'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Select Function'),
+      '#default_value' => isset($settings['select_function']) ? $settings['select_function'] : '',
+      '#description' => t('A Javascript function to execute upon item selection.<br>'.
+        'The function MUST be defined as: window.your_function_name = function (args) {} or it will NOT work.'),
+      '#required' => FALSE,
+    );    
     
   }
 
@@ -533,6 +781,13 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
   //ADFHI: Fix term matches. Currently, if you type in "paul" that matches a term, so returns 2 entries, but
   //  since the "highlight" match doesn't match an entry, the drop-down does not show up. Need to fix this.
   // Allow any client form to update widget
+  //ADFHI: Add code that adds a "tooltip" that links to the "row template" to each selected input box.
+  // - This would allow the user to just hold their "mouse" over the input box, and see a popup with what they
+  // - picked. This means that information is not "lost" but still preserved. This should not be that hard to do
+  // - and provides useful functionality. It should probably perhaps also show up when the user puts "focus" on
+  // - the cell?
+  // - This functionality should be able to be turned on/off and the template should be able to be specified
+  // - the default will be the ResultFormatTemplate settings  
   $context = array('field' => $field, 'form' => $form, 'form_state' => $form_state);
   drupal_alter('gst_entityref_instance', $instance, $context);
   $field_type = $field['type'];
@@ -610,34 +865,140 @@ function gst_entityref_field_widget_form(&$form, &$form_state, $field, $instance
       	'textfield_name' => $textfield_name,
       	'tokenReplacement' => $tokenReplacement,
       	'minLbWidth' => $settings['minLbWidth'],
+        'field_type' => $field_type,
+        'field_instance' => $instance,
+        'field' => $field,
+        'select_function' => $settings['select_function'],
       );
-      $element_ref = array(
+      $element += array(
       	'#type' => 'gst_entityref',
       	'#theme' => 'gst_entityref',
         '#tree' => TRUE,
       	'#title' => $instance['label'],
         '#default_value' => '',        
         '#attributes'=> array(
-          'class' => array('gst-entityref'),
+          'class' => array('gst-entityref', 'clearfix'),
           ),
-        '#gst_entityref_options' => $gst_entityref_options,
+        '#gst_entityref_options' => &$gst_entityref_options,
         '#widget' => $instance['widget'],
       );      
-      $element_ref[$textfield_name] = array(
+      //ADFHI: The following lines marked with //ADF// might be necessary, but not sure.
+      /// They were added when I added the FAPI support for this widget but they cause a problem when "saving" so I removed them.
+      //$element['#parents'] = $element['#array_parents'] = array($field['field_name']);
+      $element_name = isset($element['#field_name']) ? $element['#field_name'] : $element['#name'];
+      //ADF//$element['#parents'] = $element['#array_parents'] = array($element_name);
+      $element[$textfield_name] = array(
         '#type' => 'textfield',
-        '#title' => $instance['label'],
+        '#title' => gst_isset_or($element['#title'], $instance['label']),
         '#size' => $settings['size'],
       	'#default_value' => $inputResultText,
-        '#attributes' => array(
+        '#attributes' => array(          
         ),
+        //ADF//'#parents' => array_merge($element['#parents'], array($textfield_name)),
+        //ADF//'#array_parents' => array_merge($element['#array_parents'], array($textfield_name)),
       	'#element_validate' => array('_gst_entityref_autocomplete_validate'),
       );
       
-      break;
+      // Add Action-Links
+      $action_links = array();
+      $entity_id_val = gst_isset_or($entity_id, FALSE);
+      //ADFTODO: I should change the "add" button to be a drop-down (like in views add/arrange) 
+      //  if there are more than one RefType specified. 
+      if ($reftype = gst_entityref_get_reftype($field, $instance)) {
+        // Add Link
+        $link = array(
+          'title' => t('add'),
+          'attributes' => array(
+            'class' => array('add-link')
+          ),
+        );
+        $add_link = gst_isset_or($settings['add_link'], FALSE);
+        switch ($add_link) {
+          case GST_LINK_CTOOLS_MODAL:
+            $link['href'] =  "gst_entityref/action/add/{$reftype}/nojs/ctools";
+            $link['attributes']['class'][] = 'ctools-use-modal';
+            $gst_entityref_options['ctools-modal'] = TRUE;
+            break;
+        
+          case GST_LINK_JQUERY_MODAL:
+            $link['href'] = "gst_entityref/action/add/{$reftype}/nojs/jquery";            
+            break;
+        
+          case GST_LINK_NORMAL:
+            $link['href'] =  "node/add/{$reftype}";
+            $link['query'] = array('destination', $_GET['q']);
+            $link['attributes']['target'] = '_blank';
+            break;
+        }
+        if ($add_link) {
+        $action_links[] = $link;
+        }        
+      }
+      
+      
+      // Edit Link
+      $link = array(
+        'title' => t('edit'),
+        'attributes' => array('class' => array('edit-link')),
+      );            
+      $edit_link = gst_isset_or($settings['edit_link'], FALSE);
+      switch ($edit_link) {
+        case GST_LINK_CTOOLS_MODAL:
+          $link['href'] =  "gst_entityref/action/edit/$entity_id_val/nojs/ctools";
+          $link['attributes']['class'][] = 'ctools-use-modal';                   
+          $gst_entityref_options['ctools-modal'] = TRUE;
+          break;
+          
+        case GST_LINK_JQUERY_MODAL:
+          $link['href'] =  "gst_entityref/action/edit/$entity_id_val/nojs/jquery";
+          break;
+        
+        case GST_LINK_NORMAL:
+          $link['href'] =  "node/$entity_id_val/edit"; 
+          $link['query'] = array('destination', $_GET['q']);
+          $link['attributes']['target'] = '_blank';
+          break;        
+      }      
+      if ($edit_link) {
+        if (!$entity_id_val) {
+          $link['attributes']['class'][] = 'hide';
+        }        
+        $action_links[] = $link;        
+      }
+      
+      if ($action_links) {
+        $element['action_links'] = array(
+          '#theme' => 'links',          
+          '#links' => $action_links,
+          '#attributes' => array(
+            'class' => array('action-links'),
+          ),
+          '#prefix' => '<div class="action-links-wrapper">',
+          '#suffix' => '</div>',
+        );        
+      }
+      break; // $widget-type == gst_entityref_autocomplete
   }
   
   
-  return $element_ref;
+  return $element;
+}
+
+function gst_entityref_get_reftype($field, $instance) {
+  $field_type = $field['type'];
+  switch ($field_type) {
+    case 'entityreference':
+      break;
+    case 'node_reference':
+      $ref_types = array_filter($field['settings']['referenceable_types']);
+      if (count($ref_types) >= 1) {
+        return reset($ref_types);
+      }
+      break;
+    case 'user_reference':
+      break;
+  }  
+  return FALSE;
 }
 
 function _gst_entityref_autocomplete_validate($element, &$form_state, $form) {
@@ -647,6 +1008,10 @@ function _gst_entityref_autocomplete_validate($element, &$form_state, $form) {
     // Take "label (entity id)', match the id from parenthesis.
     if (preg_match("/.+\((\d+)\)/", $element['#value'], $matches)) {
       $value = $matches[1];
+    } elseif (is_numeric($element['#value'])) {
+      // Just entering an NID/EntityID is also fine (not preferred, but we will save with that also)
+      // (this fixes things like prepopulate module)
+      $value = $element['#value'];
     }
   }
 
@@ -831,6 +1196,7 @@ function _get_node_reference_matches_standard($field, $instance, $options) {
 //   if ($options['limit']) {
 //     $query->range(0, $options['limit']);
 //   }
+  $query->range(0, 50);
   
   //ADFTODO: Should I remove the orderBy and ONLY use the orderBy passed in query_extray?
   $query
@@ -840,6 +1206,8 @@ function _get_node_reference_matches_standard($field, $instance, $options) {
   $results = $query->execute()->fetchAll();
   $matches = _flatten_matches($field, $instance, $results);
   return $matches;
+  
+  // NOTHING AFTER THIS IS EXECUTED \\
   $imatches = array();
   $matches = array();
   // Load Nodes
@@ -972,10 +1340,12 @@ function _flatten_matches($field, $instance, $full_results = array()) {
       $nonvalues = array('entity_id', 'bundle', 'revision_id', 'entity_type');      
       break;
     case 'node_reference':
+      $target_entity_type = 'node';
       $entities = node_load_multiple(array_keys($imatches));      
       $nonvalues = array('nid', 'node_type');
       break;
     case 'user_reference':
+      $target_entity_type = 'user';
       $entities = user_load_multiple(array_keys($imatches));
       $nonvalues = array('uid', 'data', 'created', 'access', 'login');
       break;
@@ -983,6 +1353,7 @@ function _flatten_matches($field, $instance, $full_results = array()) {
   
   // Now fix all the multi-values (convert to delimited strings)
   $inputResultTextTemplate = $instance['widget']['settings']['inputResultText'];
+  $token_fields = $instance['widget']['settings']['token_fields'];
   foreach ($imatches as $entity_id => $rec) {
     if (isset($rec['#multiple']) && $rec['#multiple']) {
       // Handle matches that had multiple matches with the same item_collection entity_id
@@ -1009,11 +1380,25 @@ function _flatten_matches($field, $instance, $full_results = array()) {
     );
     $imatches[$entity_id]['#formattedResult'] = theme('gst_entityref_result', $vars);  
   
+    // Add any token fields
+    if (!empty($token_fields)) {
+      _add_token_fields($imatches[$entity_id], $entities[$entity_id], $token_fields, $field_type, $target_entity_type);
+    }
     // Now create the un-indexed version to send to the CLIENT in JSON
     $matches[] = _mark_nonvalues($imatches[$entity_id], $nonvalues);
   }
   
   return $matches;
+}
+
+function _add_token_fields(&$match, $entity, $token_fields, $field_type, $target_type) {
+  $tfields = explode("\r\n", $token_fields);
+  foreach ($tfields as $tfield) {
+    list($tf_name, $tf_token) = explode('=', $tfield); 
+    if (!empty($tf_name)) {
+      $match[$tf_name] = gst_entityref_get_token_value($entity, $field_type, $target_type, $tf_token); 
+    }
+  }
 }
 
 /**
@@ -1022,12 +1407,28 @@ function _flatten_matches($field, $instance, $full_results = array()) {
 * 		query & callback to solve issues with '/' chars. When I used std %/% the '/' chars
 * 		while "converted" correctly on the client, created 403 errors on the server, so I changed code.
 */
+//ADFHI: This works with FormAPI, but for some reason the "InputResultText" is blank, and so is the formatted text
+// Not sure why.
+// I also need to add a "template" field so I can just specify a "template" code to use and then use that over
+// and over instead of having to trap for the field_name each time in the _instance_alter() hook
 function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $bundle_name) {
   $query_arg = $_GET[GST_QUERY_ARG];
-  $callback = $_GET[GST_CALLBACK_ARG];     
-  $field = field_info_field($field_name);
+  $callback = $_GET[GST_CALLBACK_ARG];
+  switch ($entity_type) {
+    case 'formapi':
+      $fapi_form = drupal_get_form($bundle_name);
+      if (isset($fapi_form[$field_name])) {
+        $gst_formapi = $fapi_form[$field_name]['#gst_formapi'];
+        $instance = $gst_formapi['#instance'];
+        $field = $gst_formapi['#field'];
+      }
+      break;
+    default:
+      $field = field_info_field($field_name);
+      $instance = field_info_instance($entity_type, $field_name, $bundle_name);
+      break;
+  }   
   $field_type = $field['type']; // entityreference | node_reference | user_reference
-  $instance = field_info_instance($entity_type, $field_name, $bundle_name);
   // Allow any client form to update widget
   $context = array('field' => $field, 'form' => Null, 'form_state' => Null);
   drupal_alter('gst_entityref_instance', $instance, $context);  
@@ -1152,6 +1553,101 @@ function gst_entityref_autocomplete_callback($type, $field_name, $entity_type, $
   }  
 }
 
+/**
+ * Menu callback: action callback - handles modal edit/add forms
+ * Format: %op/%nid/%ctools_js/%modal_type
+ *   %op: add | edit
+ *   %nid: for %op = add:  the content type of the element to add
+ *         for %op = edit: the NID of the element to edit
+ *   %ctools_js: TRUE if we are using Javascript, otherwise FALSE
+ *   %modal_type: type of Modal dialog to use: ctools | jquery
+ */
+function gst_entityref_action_callback($op, $nid, $js, $modal_type) {
+  global $user;
+  // Include ctools ajax and modal, dont forget to set ajax TRUE
+  ctools_include('node.pages', 'node', '');
+  $form_state = array(
+    'ajax' => TRUE,
+  );
+  $node_types = node_type_get_names();
+  switch ($op) {
+    case 'add':
+      $type = $nid;    // $nid stores the $type if we are adding a record
+      $type_name = gst_isset_or($node_types[$type], $type);
+      $title = t('Add new !type', array('!type' => $type_name));
+      $node = (object) array(
+        'uid' => $user->uid,
+        'name' => gst_isset_or($user->name, ''),
+        'type' => $type,
+        'language' => LANGUAGE_NONE
+      );
+      $form_state['build_info']['args'] = array($node);
+      $form_state['title'] = $title;
+      if (!$js) {
+        return drupal_get_form($type.'_node_form');
+      }
+      
+      ctools_include('ajax');
+      ctools_include('modal');      
+      $output = ctools_modal_form_wrapper($type . '_node_form', $form_state);
+      
+      if (gst_isset_or($form_state['executed'], FALSE)) {
+        $new_node_title = $form_state['values']['title'];
+        $new_node_nid = $form_state['nid'];
+        $output = array();
+        $output[] = ctools_modal_command_display(
+          t('New !type added', array('!type' => $type_name)),
+          '<div class="modal-message">' . 
+            t('New !type: Added !title.', array('!type' => $type_name, '!title' => $new_node_title)) . 
+          '</div>'); 
+      }
+      break; // $op = add
+      
+    case 'edit':           
+      if ($node = node_load($nid)) {
+        $type = $node->type;
+        $type_name = gst_isset_or($node_types[$type], $type);
+        $node_title = $node->title;
+        $title = t('Edit !type: !title', array('!type' => $type_name, '!title' => $node_title));
+        $form_state['build_info']['args'] = array($node);
+        $form_state['title'] = $title;
+        if (!$js) {
+          return drupal_get_form($type.'_node_form', $node);
+        }
+        
+        ctools_include('ajax');
+        ctools_include('modal');
+        $output = ctools_modal_form_wrapper($type . '_node_form', $form_state);
+        
+      } else {
+        $output = array();
+        $output[] = ctools_modal_command_display(
+          t('Error: Could not open record with id: !nid.', array('!nid' => $nid)),
+          '<div class="modal-message">' .
+          t('Error: Could not open record with id: !nid.', array('!nid' => $nid)) .
+          '</div>');        
+      }
+      
+      if (gst_isset_or($form_state['executed'], FALSE)) {
+        $new_node_title = $form_state['values']['title'];
+        $new_node_nid = $form_state['nid'];
+        $output = array();
+        $output[] = ctools_modal_command_display(
+          t('!type: !title updated.', array('!type' => $type_name, '!title' => $new_node_title)),
+          '<div class="modal-message">' .
+          t('!type: !title updated.', array('!type' => $type_name, '!title' => $new_node_title)) .
+          '</div>' .
+          theme('status_messages'));
+      }
+      
+      break; // $op = edit
+  }
+  
+  print ajax_render($output);
+  exit;
+}
+
+
 function _buildEntityFieldQuery($field, $match = NULL, $match_operator, $limit = 0) {
   $query = new EntityFieldQuery();
   $query->entityCondition('entity_type', $field['settings']['target_type']);
@@ -1243,7 +1739,7 @@ function _mark_nonvalues($entity, $nonvalues) {
   return $marked_e;
 }
 
-function gst_entityref_get_resultFormatTemplate($instance) {
+function gst_entityref_get_resultFormatTemplate($instance, $vars = NULL) {
   $resultFormatterType = $instance['widget']['settings']['resultFormatterType'];
   switch ($resultFormatterType) {
     case 'CUSTOM':
@@ -1269,14 +1765,58 @@ function gst_entityref_get_resultFormatTemplate($instance) {
         }
       }
       if (is_readable($file)) {
-        if ($contents = file_get_contents($file)) {
+        if ($vars) {
+          // Process file as a TEMPLATE
+          extract($vars, EXTR_SKIP);          // Extract variables to local namespace
+          ob_start();                         // start output buffering
+          include "$file";                    // include the template file
+          $contents = ob_get_contents();      // get contents of the buffer
+          ob_end_clean();                     // end buffering and discard
           return $contents;
         } else {
-          return '';
+          // Open as NORMAL file
+          if ($contents = file_get_contents($file)) {
+            return $contents;
+          } else {
+            return '';
+          }          
         }
+
       }
       break;
   }
+}
+
+function gst_entityref_set_textfield_value(&$element, $textfield_name = NULL) {
+  $textfield_name = ($textfield_name) ? $textfield_name :
+    $element['#gst_entityref_options']['textfield_name'];
+  $textfield_value = $element[$textfield_name]['#value'];
+  if (is_numeric($textfield_value)) {
+    $gst_entityref_options = $element['#gst_entityref_options'];
+    $field_type = $gst_entityref_options['field_type'];
+    $field = $gst_entityref_options['field'];
+    $instance = $gst_entityref_options['field_instance'];    
+    switch ($field_type) {
+      case 'entityreference':
+        $entity_id = $textfield_value;
+        $entities = entity_load($field['settings']['target_type'], array($entity_id));
+        $entity = $entities[$entity_id];
+        break;
+      case 'node_reference':
+        $entity_id = $textfield_value;
+        $entity = node_load($entity_id);
+        break;
+      case 'user_reference':
+        $entity_id = $textfield_value;
+        $entity = user_load($entity_id);
+        break;
+    }
+    // Load the value for Input field to display
+    $inputResultText = gst_entityref_get_inputResultText($entity, $instance);
+    
+    $element[$textfield_name]['#value'] = $inputResultText;
+  }
+      
 }
 
 function gst_entityref_get_inputResultText($entity, $instance, $template = NULL, $append_id = TRUE) {
@@ -1310,6 +1850,26 @@ function gst_entityref_get_inputResultText($entity, $instance, $template = NULL,
       break;      
   }
   return $inputResultText;
+}
+
+function gst_entityref_get_token_value($entity, $field_type, $target_type, $template) {
+  switch ($field_type) {
+    case 'entityreference':      
+      $value = token_replace($template,
+        array($target_type => $entity), array('sanitize' => FALSE));
+      break;
+    case 'node_reference':
+      $nid = $entity->nid;
+      $value = token_replace($template,
+        array('node' => $entity), array('sanitize' => FALSE));
+      break;
+    case 'user_reference':
+      $uid = $entity->uid;
+      $value = token_replace($template,
+        array('user' => $entity), array('sanitize' => FALSE));
+      break;
+  }
+  return $value;  
 }
 
 function gst_entityref_get_label($entity, $instance, $template = NULL) {
@@ -1498,7 +2058,7 @@ function gst_entityref_field_formatter_info() {
 function gst_entityref_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
   $display = $instance['display'][$view_mode];
   $settings = $display['settings'];
-  
+  $element = array();
   switch ($display['type']) {
     case 'gst_entityref_label':
       $element['link'] = array(
@@ -1616,6 +2176,9 @@ function gst_entityref_field_formatter_view($entity_type, $entity, $field, $inst
   // I should add the ability to set on ANY Field Collection a setting for the "label" that uses "tokens"
   // I don't need to add this code to gst_entityref, I can add it either to the FC module, or add it to
   // another module (gst_field_collections) - I could use fc_entity_info_alter() to add it.
+  //ADFHI: Add "tooltip" popup similar to Input box. It should show this when user hovers over the 'entityref' link
+  // - and display the output that normally shows in the ResultFormat (by default) or any other custom display
+  // - (perhaps link this to a Display formatter so I could display the entire view? - that could be V2 of this functionality)
   switch ($display['type']) {
     case 'gst_entityref_label':
       switch ($field_type) {

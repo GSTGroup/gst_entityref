@@ -7,8 +7,12 @@
 	Drupal.behaviors.gst_entityref = {
     attach: function(context) {
       jQuery.each(Drupal.settings.gst_entityref, function (selector) {
+        if (Drupal.settings.gst_entityref[selector].gstprocess != undefined) { return; }
+        var settings = this;
         var gst_entityref_id = '#' + this.id;
         var input_id = '#' + this.input_id;
+        var action_links_id = '#' + this.action_links_id;
+        var textfield_name = this.textfield_name;
         var source = this.source;
         var resultFilters = this.resultFilters;
         var maxResults = this.maxResults;
@@ -22,9 +26,12 @@
         var queryDelay = this.queryDelay;
         var tokenReplacement = this.tokenReplacement;
         var minLbWidth = this.minLbWidth;
+        var select_function = this.select_function;
         
+        // YUI Docs: http://yuilibrary.com/yui/docs/autocomplete/
         // YUI Initialization
-        var Y = YUI().use('node', 'autocomplete', 'autocomplete-highlighters', 'autocomplete-filters', 'base', 'plugin', function (Y) {
+        var Y = YUI().use('node', 'autocomplete', 'autocomplete-highlighters', 'autocomplete-filters', 'base', 'plugin', 
+          function (Y) {
           
           // YUI AC Plugins - needs use('base','plugin')
           //-------------------------------------------------------------------
@@ -53,16 +60,21 @@
                     bbRegion = hostBb.get('region');
                     if (bbRegion.width < minWidth) {
                       hostBb.setStyle('width', minWidth + 'px'); // set width                      
-                      if (bbRegion.left + minWidth > vpRegion.width) { // set left                        
-                        hostBb.setStyle('left', (vpRegion.width - minWidth) + 'px');
+                      if (bbRegion.left + minWidth > vpRegion.width) { // set left  
+                        //console.log('hostBoundingBox.left: ' + (vpRegion.width - minWidth) + 'px | vpRegion.width: ' + vpRegion.width + 'px');
+                        //hostBb.setStyle('left', (vpRegion.width - minWidth) + 'px');  //ADFHI: This is not working, so remove it
                       }
                     }
                     
+                    //ADFTODO: Figure out a way to fix the contentBox height
                     // Set contentBox Size (height)
-                    hostCb.setStyle('height', '');
+                    //hostCb.setStyle('height', '');
                     cbRegion = hostCb.get('region');
                     if (cbRegion.height + cbRegion.top > vpRegion.height) {
-                        hostCb.setStyle('height', (vpRegion.height - cbRegion.top) + 'px');
+                        //console.log('vpRegion.height: ' + vpRegion.height + 'px | cbRegion.top ' + cbRegion.height + 'px');
+                        //console.log('set contentBox Height: ' + (vpRegion.height - cbRegion.top) + 'px');
+                        //hostCb.setStyle('height', (vpRegion.height - cbRegion.top) + 'px');
+                        //hostCb.setStyle('height', (vpRegion.height - cbRegion.height) + 'px');                        
                     }
                 }
             },
@@ -92,7 +104,12 @@
           // AutoComplete widget skin will be applied.
           Y.one('body').addClass('yui3-skin-sam');
           
-          var inputNode = Y.one(input_id).plug(Y.Plugin.AutoComplete, {
+          // 6/1/12ADF: I put the following in to fix issues with ctools-modal - for some reason, when gst_entityref
+          // is loaded in the ctools-modal, Y.one(input_id) is null so I have to exit or it breaks other JS
+          var Y_input_id = Y.one(input_id);
+          if (Y_input_id == undefined) { return; }  // exit if Y.one(input_id) is undefined          
+          //var inputNode = Y.one(input_id).plug(Y.Plugin.AutoComplete, {
+          var inputNode = Y_input_id.plug(Y.Plugin.AutoComplete, {
             //resultHighlighter: 'phraseMatch',
             resultHighlighter: customHighlighter,
             //ADFTODO: resultFilters is hardcoded to only do phraseMatch filtering.
@@ -108,6 +125,7 @@
             //resultFormatter: window[resultFormatter], // THIS DOES NOT WORK
             resultFormatter: gst_entityref_formatter,
             alwaysShowList: alwaysShowList,
+            //scrollIntoView: true,   //ADFHI: Not sure what to do - scrollIntoView doesn't work very well
             //activateFirstItem: true,
             queryDelay: queryDelay,
             plugins :  [
@@ -119,6 +137,61 @@
             //source: 'http://localhost:8888/men/gst_entityref/search_jsonp/field_e_lesson_fcref3/node/gstevent/{query}/{callback}',
           });
   
+          // CLEAR event
+          inputNode.ac.on('clear', function (e) {
+            var $edit_link = $('.edit-link', action_links_id);
+            if ($edit_link.length > 0) {
+              // Hide the 'edit' button
+              $edit_link.addClass('hide');
+            }
+          }); // clear event
+          
+          // SELECT event
+          inputNode.ac.on('select', function (e) {
+            var result = e.result;
+            // Update 'edit' link if we have one
+            //console.log('result: ', result);
+            //console.log('action_links_id:', action_links_id);            
+            
+            var $edit_link = $('.edit-link', action_links_id);
+            if ($edit_link.length > 0) {
+              var edit_link_id = $edit_link.attr('id'); // $edit_link.get(0).id will also work
+              //console.log('edit_link:', $edit_link);
+              var result_id = result.raw['#'+textfield_name];
+              //console.log('edit_link:original href', $edit_link.attr('href'));
+              // replace url with format .../node/#NID/edit... with .../node/#NEW-NID/edit...
+              var new_href = $edit_link.attr('href').replace(/(.*\/node\/)([0-9]*)(\/edit.*)/, '$1'+result_id+'$3');
+              //console.log('edit_link:new href', new_href);
+              $edit_link.attr('href', new_href);
+              $edit_link.removeClass('hide');       // Unhide if it was hidden
+                                          
+              // Process CTOOLS / JQuery Links (we have to update these since the 
+              //  user may have changed the contents of the input box and we want to edit the *CORRECT* node)
+              
+              // CTOOLS Modal Link
+              if ($edit_link.hasClass('ctools-use-modal')) {
+                // Find Drupal.ajax and process the CTOOLS link
+                for (var ajax_id in Drupal.ajax) {
+                  var ajax_cfg = Drupal.ajax[ajax_id];
+                  var ajax_cfg_id = (ajax_cfg.element != undefined) ? ajax_cfg.element.id : -1;
+                  if (ajax_cfg_id == edit_link_id) {                    
+                    Drupal.ajax[ajax_id].url = ajax_cfg.url.replace(/(.*\/edit\/)([0-9]*)(\/.*)/, '$1'+result_id+'$3');
+                    Drupal.ajax[ajax_id].options.url = Drupal.ajax[ajax_id].options.url.replace(/(.*\/edit\/)([0-9]*)(\/.*)/, '$1'+result_id+'$3');
+                    //console.log('Found AJAX Settings', ajax_cfg);
+                  }
+                }                
+              }
+            }            
+            
+            // Call select_function if one exists
+            var select_fn = window[select_function];
+            if (select_function && typeof select_fn == 'function') {
+              select_fn(e, settings);
+            }
+            
+          }); // select event
+          
+          // QUERY event
           // The following handles subMatch queries
           inputNode.ac.on('query', function(e) {
             if (!subFilter) { return; }
@@ -135,7 +208,7 @@
             }            
             // Save this query so it can be referred to later
             e.target.lastQuery = query;
-          });
+          }); // query event
                     
           // This provides NO filter. It relies upon the server to handle filtering.
           // This is primarilyh used for when we filter on a "term" that is not displayed.
@@ -267,7 +340,8 @@
               return rfmt;
             });
           }
-        });
+        }); // Y.function()
+        Drupal.settings.gst_entityref[selector].gstprocess = true;
         
 //        $(".gst-entityref:not(.gst-entityref-processed)", context).addClass("gst-entityref-processed").each(function () {
 //          gst_entityref_processing(this); // pass in the context of the element being processed
